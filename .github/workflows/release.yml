@@ -1,12 +1,11 @@
-name: Release and VPM listing
+name: Release
 
-# Push a tag equal to Packages/<id>/package.json "version" (e.g. 0.1.0) to publish a release.
-# Every run rebuilds the VPM listing (index.json) from all releases and deploys it to GitHub Pages:
-#   https://chikumatateshina.github.io/PDF2UnityTransformer/index.json
+# Push a tag equal to Packages/<id>/package.json "version" (e.g. 0.1.1) to publish a release.
+# The VPM listing is then rebuilt and deployed by listing.yml (runs on main, which the
+# github-pages environment allows; tag refs are rejected by its protection rules).
 on:
   push:
     tags: ["[0-9]+.[0-9]+.[0-9]+*"]
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -20,7 +19,6 @@ env:
 
 jobs:
   release:
-    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -54,32 +52,3 @@ jobs:
           gh release create "$VERSION" "$PACKAGE_ID-$VERSION.zip" package.json \
             --title "$VERSION" \
             --notes "Add the VPM listing to VRChat Creator Companion: https://chikumatateshina.github.io/PDF2UnityTransformer/index.json"
-
-  # Requires Settings > Pages > Build and deployment > Source = "GitHub Actions" (one-time).
-  listing:
-    needs: release
-    if: always() && (needs.release.result == 'success' || needs.release.result == 'skipped')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build listing
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 .github/scripts/build_listing.py "$GITHUB_REPOSITORY" site
-
-      - uses: actions/configure-pages@v5
-
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: site
-
-      - id: deploy
-        uses: actions/deploy-pages@v4

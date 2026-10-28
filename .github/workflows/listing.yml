@@ -1,0 +1,48 @@
+name: VPM listing
+
+# Rebuilds index.json from all GitHub releases and deploys it to GitHub Pages:
+#   https://chikumatateshina.github.io/PDF2UnityTransformer/index.json
+# Runs on the default branch (required by the github-pages environment protection rules).
+on:
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/listing.yml"
+      - ".github/scripts/build_listing.py"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build listing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/build_listing.py "$GITHUB_REPOSITORY" site
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
