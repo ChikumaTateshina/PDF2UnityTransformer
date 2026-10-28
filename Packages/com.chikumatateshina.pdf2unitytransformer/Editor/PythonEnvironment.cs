@@ -36,20 +36,20 @@ namespace PDF2Unity.Editor
             var basePy = FindBasePython(out var report);
             if (basePy == null)
                 throw new InvalidOperationException(
-                    $"Python {MinMajor}.{MinMinor}+ was not found. Install it from https://www.python.org/ " +
-                    $"(enable 'Add python.exe to PATH') or set the base Python path.\n{report}");
+                    $"Python {MinMajor}.{MinMinor} 以上が見つかりません。https://www.python.org/ からインストールし" +
+                    $"（「Add python.exe to PATH」を有効に）、Unity を再起動するか「詳細設定」で python.exe を指定してください。\n{report}");
             var env = new PythonEnvironment();
             var venvPy = PdfUnitySettings.ManagedPythonExe;
             var req = Path.Combine(PdfUnitySettings.BundledCompilerDir, "requirements.txt");
             if (!File.Exists(venvPy))
-                env.steps.Enqueue(("Creating virtual environment", basePy,
+                env.steps.Enqueue(("仮想環境を作成中", basePy,
                     new List<string> { "-m", "venv", PdfUnitySettings.EnvironmentDir }));
-            env.steps.Enqueue(("Updating pip", venvPy,
+            env.steps.Enqueue(("pip を更新中", venvPy,
                 new List<string> { "-m", "pip", "install", "--disable-pip-version-check", "--upgrade", "pip" }));
-            env.steps.Enqueue(("Installing compiler dependencies", venvPy,
+            env.steps.Enqueue(("ライブラリを導入中", venvPy,
                 new List<string> { "-m", "pip", "install", "--disable-pip-version-check", "-r", req }));
-            env.steps.Enqueue(("Verifying", venvPy, new List<string> { "-c", ImportCheck }));
-            env.Log.AppendLine($"Base Python: {basePy}");
+            env.steps.Enqueue(("動作を確認中", venvPy, new List<string> { "-c", ImportCheck }));
+            env.Log.AppendLine($"元にする Python: {basePy}");
             env.Next();
             return env;
         }
@@ -60,11 +60,11 @@ namespace PDF2Unity.Editor
             var py = PdfUnitySettings.PythonExe;
             if (Path.IsPathRooted(py) && !File.Exists(py))
             {
-                message = "Compiler environment is not set up.";
+                message = "変換環境はまだ準備されていません。";
                 return false;
             }
             var (code, outp) = RunSync(py, new List<string> { "-c", ImportCheck }, 60000);
-            message = code == 0 ? "Compiler environment is ready." : $"Compiler environment is incomplete: {Last(outp)}";
+            message = code == 0 ? "変換環境は準備できています。" : $"変換環境が不完全です: {Last(outp)}";
             return code == 0;
         }
 
@@ -86,7 +86,7 @@ namespace PDF2Unity.Editor
                 };
                 var (code, outp) = RunSync(exe, args, 20000);
                 var line = Last(outp);
-                sb.AppendLine($"{exe}: {(code == 0 ? line : "not available")}");
+                sb.AppendLine($"{exe}: {(code == 0 ? line : "見つかりません")}");
                 if (code == 0 && !line.StartsWith("OLD") && File.Exists(line)) { report = sb.ToString(); return line; }
             }
             report = sb.ToString();
@@ -144,7 +144,7 @@ namespace PDF2Unity.Editor
             {
                 Running = false;
                 Succeeded = true;
-                Step = "Done";
+                Step = "完了";
                 return;
             }
             var (label, exe, args) = steps.Dequeue();
@@ -180,7 +180,7 @@ namespace PDF2Unity.Editor
                 current = null;
                 if (code != 0)
                 {
-                    Log.AppendLine($"{Step} failed (exit {code}).");
+                    Log.AppendLine($"{Step}に失敗しました（終了コード {code}）。");
                     Running = false;
                     return false;
                 }

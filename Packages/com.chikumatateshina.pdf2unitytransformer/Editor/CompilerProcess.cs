@@ -19,6 +19,7 @@ namespace PDF2Unity.Editor
         public string CmykProfile;
         public string SubstituteFonts;
         public bool FontRightsDeclared;
+        public bool PrecomposeTranslucent;
         public float WorldScale = 1f;
         public int TimeoutSec = 1800;
     }
@@ -48,7 +49,7 @@ namespace PDF2Unity.Editor
 
         public CompilerProcess(CompileRequest req)
         {
-            if (!File.Exists(req.InputPdf)) throw new FileNotFoundException("PDF not found", req.InputPdf);
+            if (!File.Exists(req.InputPdf)) throw new FileNotFoundException("PDF ファイルが見つかりません。", req.InputPdf);
             workDir = Path.Combine(Path.GetTempPath(), "pdf2unity-run-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(workDir);
             var args = new List<string>
@@ -64,6 +65,7 @@ namespace PDF2Unity.Editor
                 "--world-scale", req.WorldScale.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 "--timeout", req.TimeoutSec.ToString(),
                 "--font-rights", req.FontRightsDeclared ? "declared" : "verify",
+                "--translucency", req.PrecomposeTranslucent ? "precompose" : "native",
             };
             if (!string.IsNullOrEmpty(req.CmykProfile)) { args.Add("--cmyk-profile"); args.Add(req.CmykProfile); }
             if (!string.IsNullOrEmpty(req.SubstituteFonts)) { args.Add("--substitute-fonts"); args.Add(req.SubstituteFonts); }
@@ -128,7 +130,7 @@ namespace PDF2Unity.Editor
                 Kill();
                 Current = State.TimedOut;
                 ErrorCode = "timeout";
-                ErrorMessage = "compiler did not finish within the timeout";
+                ErrorMessage = "制限時間内に終了しませんでした。";
                 return false;
             }
             if (process.HasExited)
@@ -143,7 +145,7 @@ namespace PDF2Unity.Editor
                     {
                         Current = State.Failed;
                         ErrorCode = ErrorCode ?? $"exit-{process.ExitCode}";
-                        ErrorMessage = ErrorMessage ?? "compiler exited without a result";
+                        ErrorMessage = ErrorMessage ?? "結果を返さずに終了しました。";
                     }
                 }
                 Cleanup();

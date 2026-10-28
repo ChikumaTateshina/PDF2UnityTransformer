@@ -14,17 +14,17 @@ PDF を Unity Editor 上で事前に変換し、VRChat ワールドに静的な�
 
 ## 使い方
 
-1. `Tools > PDF2UnityTransformer > PDF Compiler` を開く
-2. 初回のみ **Set up** を押す（`%LOCALAPPDATA%\PDF2UnityTransformer` に専用の Python 環境を作り、PyPI から依存ライブラリを導入します）
-3. PDF・ページ範囲・モード・ターゲット（PC / Quest）を選び **Compile**
-4. 診断を確認して **Generate PC prefabs**（Quest も同様）→ **Place in scene**
-5. Quest 向けにビルドする前に `Tools > PDF2UnityTransformer > Switch Placed Documents To Active Build Target`
+1. `Tools > PDF2UnityTransformer > PDF 変換` を開く
+2. 初回のみ「変換環境（Python）」の **準備する** を押す（`%LOCALAPPDATA%\PDF2UnityTransformer` に専用の Python 環境を作り、PyPI から依存ライブラリを導入します）
+3. PDF（参照ボタンまたはドラッグ＆ドロップ）・ページ範囲・変換モード・出力先（PC / Quest）を選び **変換する**
+4. 診断を確認して **PC 用 Prefab を生成**（Quest も同様）→ **シーンに配置**
+5. Quest 向けにビルドする前に `Tools > PDF2UnityTransformer > 配置済み文書をビルドターゲットに切り替え`
 
 | モード | 動作 |
 |---|---|
-| Hybrid（既定） | ベクター・文字・画像はネイティブ、再現できない効果だけ該当領域を画像化 |
-| Strict | 再現できない描画命令があれば失敗 |
-| Page fallback | 必要なページ全体を画像化（明示指定時のみ） |
+| ハイブリッド（既定） | ベクター・文字・画像はネイティブ、再現できない効果だけ該当領域を画像化 |
+| 厳密 | 再現できない描画命令があれば失敗 |
+| ページ画像化 | 必要なページ全体を画像化（明示指定時のみ） |
 
 生成先は `Assets/PDF2UnityTransformer/Generated/<文書名>/<PC|Quest>/` です。再変換しても GUID は維持され、手で編集した生成物は上書きされません。生成物に Batching Static を付けないでください（描画順が崩れる場合があります）。
 

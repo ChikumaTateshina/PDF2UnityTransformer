@@ -60,11 +60,10 @@ namespace PDF2Unity.Editor
         public static GenerateReport Generate(ExchangePackage pkg, string target, GenerateOptions opt)
         {
             if (!pkg.Targets.TryGetValue(target, out var tinfo))
-                throw new InvalidOperationException($"package has no '{target}' target");
+                throw new InvalidOperationException($"変換データに {L.Target(target)} 用の出力がありません。");
             if (tinfo.Status == "fail" && !opt.AllowFailedTarget)
                 throw new InvalidOperationException(
-                    $"target '{target}' failed its checks ({string.Join("; ", tinfo.BudgetFailures)}). " +
-                    "The document is not converted for this target.");
+                    $"{L.Target(target)} の確認に通らなかったため生成しません（{string.Join("; ", tinfo.BudgetFailures)}）。");
             var rep = new GenerateReport { Folder = FolderFor(pkg, target) };
             var folder = rep.Folder;
             foreach (var sub in new[] { "", "/Textures", "/Materials", "/Meshes", "/Pages" }) EnsureFolder(folder + sub);
@@ -211,7 +210,7 @@ namespace PDF2Unity.Editor
             record.Save(folder);
             AssetDatabase.Refresh();
             foreach (var s in rep.SkippedUserEdited)
-                rep.Messages.Add($"Not overwritten (edited after generation): {s}. Create a prefab variant for customisations.");
+                rep.Messages.Add($"生成後に編集されたため上書きしませんでした: {s}（調整は Prefab Variant で行うことをおすすめします）");
             return rep;
         }
 
@@ -264,7 +263,7 @@ namespace PDF2Unity.Editor
         {
             produced.Add(path);
             var shader = Shader.Find(shaderName);
-            if (shader == null) throw new InvalidOperationException($"shader {shaderName} not found (is the package imported?)");
+            if (shader == null) throw new InvalidOperationException($"シェーダー {shaderName} が見つかりません。パッケージが正しく導入されているか確認してください。");
             var mat = AssetDatabase.LoadAssetAtPath<Material>(path);
             if (mat != null && !record.CanWrite(path, opt, rep)) return mat;
             bool created = mat == null;

@@ -60,7 +60,7 @@ namespace PDF2Unity.Editor
             foreach (Transform c in t) Collect(c, list);
         }
 
-        [MenuItem(PdfUnitySettings.MenuRoot + "Switch Placed Documents To Active Build Target")]
+        [MenuItem(PdfUnitySettings.MenuRoot + "配置済み文書をビルドターゲットに切り替え")]
         public static void SwitchAll()
         {
             var want = ActiveTargetFolder;
@@ -73,15 +73,15 @@ namespace PDF2Unity.Editor
                 var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(counterpart);
                 if (prefab == null || rec.Status == "fail")
                 {
-                    Debug.LogWarning($"[PDF2UnityTransformer] '{p.Doc}' has no usable {want} output; it is PC-only. " +
-                                     "Remove it from the Quest build or recompile with the Quest target.", p.Instance);
+                    Debug.LogWarning($"[PDF2UnityTransformer] 「{p.Doc}」には使用できる {want} 用の出力がありません（PC 専用）。" +
+                                     "Quest ビルドから外すか、Quest を出力先にして変換し直してください。", p.Instance);
                     continue;
                 }
                 if (want == "Quest" && !rec.DeviceVerified)
-                    Debug.LogWarning($"[PDF2UnityTransformer] '{p.Doc}' Quest output has not been verified on a device yet.", p.Instance);
+                    Debug.LogWarning($"[PDF2UnityTransformer] 「{p.Doc}」の Quest 出力はまだ実機確認されていません。", p.Instance);
                 var old = p.Instance.transform;
                 var inst = (GameObject)PrefabUtility.InstantiatePrefab(prefab, old.gameObject.scene);
-                Undo.RegisterCreatedObjectUndo(inst, "Switch PDF document target");
+                Undo.RegisterCreatedObjectUndo(inst, "PDF 文書のターゲット切り替え");
                 inst.transform.SetParent(old.parent, false);
                 inst.transform.localPosition = old.localPosition;
                 inst.transform.localRotation = old.localRotation;
@@ -92,7 +92,7 @@ namespace PDF2Unity.Editor
                 Undo.DestroyObjectImmediate(old.gameObject);
                 swapped++;
             }
-            Debug.Log($"[PDF2UnityTransformer] switched {swapped} placed document(s) to {want}.");
+            Debug.Log($"[PDF2UnityTransformer] 配置済みの文書 {swapped} 件を {want} 用に切り替えました。");
         }
 
         public static List<string> Mismatches()
@@ -100,7 +100,7 @@ namespace PDF2Unity.Editor
             var want = ActiveTargetFolder;
             var r = new List<string>();
             foreach (var p in FindPlacements())
-                if (p.Target != want) r.Add($"{p.Instance.name} uses {p.Target} assets ({p.AssetPath})");
+                if (p.Target != want) r.Add($"{p.Instance.name} は {p.Target} 用のアセットを使っています（{p.AssetPath}）");
             return r;
         }
     }
@@ -113,7 +113,7 @@ namespace PDF2Unity.Editor
         public void OnPreprocessBuild(BuildReport report)
         {
             foreach (var m in TargetSwitcher.Mismatches())
-                Debug.LogWarning($"[PDF2UnityTransformer] {m}; use Tools/PDF2UnityTransformer/Switch Placed Documents To Active Build Target.");
+                Debug.LogWarning($"[PDF2UnityTransformer] {m}。Tools > PDF2UnityTransformer > 配置済み文書をビルドターゲットに切り替え を実行してください。");
         }
     }
 }
