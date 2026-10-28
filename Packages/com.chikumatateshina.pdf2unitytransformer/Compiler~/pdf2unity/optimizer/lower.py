@@ -103,16 +103,26 @@ class ClipResolver:
         self.cache = {}
 
     def get(self, cid) -> ClipShape:
-        if cid in self.cache:
-            return self.cache[cid]
+        # Resolve ancestors first without consuming the Python call stack. PDFs
+        # can accumulate thousands of clips before the first painting operation.
+        pending = []
+        current = cid
+        while current is not None and current not in self.cache:
+            pending.append(current)
+            current = self.page.clips[current].parent
+        for current in reversed(pending):
+            self.cache[current] = self._resolve(current)
+        return self.cache[cid]
+
+    def _resolve(self, cid) -> ClipShape:
         node = self.page.clips[cid]
+        parent = self.cache[node.parent] if node.parent is not None else None
+        if parent is not None and parent.empty:
+            return parent
         polys = G.simplify(G.fill_outline(node.segments, node.ctm, node.fill_rule, self.tol), node.fill_rule)
         rect = _as_rect(polys)
-        if node.parent is not None:
-            parent = self.get(node.parent)
-            if parent.empty:
-                shape = parent
-            elif rect is not None and parent.rect is not None:
+        if parent is not None:
+            if rect is not None and parent.rect is not None:
                 r = G.bbox_intersection(rect, parent.rect)
                 if r is None:
                     shape = ClipShape([], None)
@@ -124,7 +134,6 @@ class ClipResolver:
                 shape = ClipShape(res, _as_rect(res))
         else:
             shape = ClipShape(polys, rect)
-        self.cache[cid] = shape
         return shape
 
 

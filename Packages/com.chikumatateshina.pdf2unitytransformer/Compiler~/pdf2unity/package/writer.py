@@ -33,30 +33,37 @@ GEOM_MAGIC = b"P2UG"
 GEOM_VERSION = 1
 
 
+def _triangle_cross(verts, tri):
+    """Signed double areas, computed in float64 for both winding and statistics."""
+    a, b, c = (verts[tri[:, k]].astype(np.float64) for k in range(3))
+    return (b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1]) - (b[:, 1] - a[:, 1]) * (c[:, 0] - a[:, 0])
+
+
 def fix_winding(verts: np.ndarray, idx: np.ndarray) -> np.ndarray:
     """Make every triangle clockwise in Unity XY (front face towards -Z); drop degenerate ones."""
     if len(idx) == 0:
         return idx
     tri = idx.reshape(-1, 3)
-    a = verts[tri[:, 0]].astype(np.float64)
-    b = verts[tri[:, 1]].astype(np.float64)
-    c = verts[tri[:, 2]].astype(np.float64)
-    cross = (b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1]) - (b[:, 1] - a[:, 1]) * (c[:, 0] - a[:, 0])
+    cross = _triangle_cross(verts, tri)
     keep = np.abs(cross) > 1e-14
-    tri = tri[keep].copy()
+    tri = tri[keep]
     flip = cross[keep] > 0
     tri[flip, 1], tri[flip, 2] = tri[flip, 2].copy(), tri[flip, 1].copy()
-    return tri.reshape(-1).astype(np.uint32)
+    return tri.reshape(-1).astype(np.uint32, copy=False)
 
 
 def triangle_area(verts, idx) -> float:
     if len(idx) == 0:
         return 0.0
-    tri = idx.reshape(-1, 3)
-    a, b, c = verts[tri[:, 0]].astype(np.float64), verts[tri[:, 1]].astype(np.float64), verts[tri[:, 2]].astype(
-        np.float64)
-    cross = (b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1]) - (b[:, 1] - a[:, 1]) * (c[:, 0] - a[:, 0])
+    cross = _triangle_cross(verts, idx.reshape(-1, 3))
     return float(np.abs(cross).sum() / 2)
+
+
+def _write_array(stream, array, dtype):
+    # The buffer protocol avoids allocating a second bytes object for the entire
+    # array. Flattening also supports empty batches and non-contiguous inputs.
+    data = np.ascontiguousarray(array, dtype=dtype).reshape(-1)
+    stream.write(memoryview(data).cast("B"))
 
 
 def write_geom(path: str, batches) -> None:
@@ -66,11 +73,11 @@ def write_geom(path: str, batches) -> None:
         for b in batches:
             has_uv = b.uvs is not None
             f.write(struct.pack("<III", len(b.verts), len(b.idx), 1 if has_uv else 0))
-            f.write(np.ascontiguousarray(b.verts, dtype="<f4").tobytes())
-            f.write(np.ascontiguousarray(b.colors, dtype=np.uint8).tobytes())
+            _write_array(f, b.verts, "<f4")
+            _write_array(f, b.colors, np.uint8)
             if has_uv:
-                f.write(np.ascontiguousarray(b.uvs, dtype="<f4").tobytes())
-            f.write(np.ascontiguousarray(b.idx, dtype="<u4").tobytes())
+                _write_array(f, b.uvs, "<f4")
+            _write_array(f, b.idx, "<u4")
 
 
 def read_geom(path: str):

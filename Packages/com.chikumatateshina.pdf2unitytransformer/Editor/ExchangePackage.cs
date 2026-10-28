@@ -203,8 +203,7 @@ namespace PDF2Unity.Editor
                     for (int k = 0; k < nv; k++) bd.Vertices[k] = new Vector3(br.ReadSingle(), br.ReadSingle(), 0f);
                     for (int k = 0; k < nv; k++)
                     {
-                        var c = br.ReadBytes(4);
-                        bd.Colors[k] = new Color32(c[0], c[1], c[2], c[3]);
+                        bd.Colors[k] = new Color32(br.ReadByte(), br.ReadByte(), br.ReadByte(), br.ReadByte());
                     }
                     if ((flags & 1) != 0)
                     {

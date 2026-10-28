@@ -75,10 +75,10 @@ def compile_document(options: CompileOptions, progress=None) -> dict:
     diag = Diagnostics()
     out = prepare_output(options.output)
     ir, ctx = build_document_ir(options, diag, out, progress)
-    save_ir(ir, os.path.join(out, "document.ir.json.gz"))
-
-    renderer = PdfiumRenderer(options.input)
+    renderer = None
     try:
+        save_ir(ir, os.path.join(out, "document.ir.json.gz"))
+        renderer = PdfiumRenderer(options.input)
         for page in ir.pages:
             pw, ph = renderer.page_size(page.index)
             dw, dh = page.display_size
@@ -99,8 +99,11 @@ def compile_document(options: CompileOptions, progress=None) -> dict:
                 if progress:
                     progress("reference", k + 1, len(ir.pages))
     finally:
-        renderer.close()
-        ctx.pdf.close()
+        try:
+            if renderer is not None:
+                renderer.close()
+        finally:
+            ctx.pdf.close()
 
     # ---- status per target -----------------------------------------------------
     errors = diag.count("error")

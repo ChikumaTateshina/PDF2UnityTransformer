@@ -1,7 +1,7 @@
 {
   "name": "com.chikumatateshina.pdf2unitytransformer",
   "displayName": "PDF2UnityTransformer",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "unity": "2022.3",
   "description": "Converts PDF documents into static meshes, textures, materials and prefabs in the Unity Editor (no runtime PDF parsing, no scripts, no Udon in the world). Requires Python 3.10+ on the editing PC.",
   "author": {
