@@ -33,3 +33,7 @@ PDF を Unity Editor 上で事前に変換し、VRChat ワールドに静的な�
 - 変換しても、PDF の文章・画像・フォントを複製・公開する権利は得られません。権利の確認は利用者の責任です。埋込フォントの利用許諾（fsType）が「制限」の場合は変換を停止します。
 - Quest 出力は自動の負荷チェックを通っても、実機で確認するまで「要確認」と表示されます。
 - 依存ライブラリ（pikepdf, pypdfium2, pyclipper, mapbox-earcut, fontTools, NumPy, Pillow）はそれぞれのライセンスに従います。
+
+## ライセンス
+
+[MIT License](LICENSE)

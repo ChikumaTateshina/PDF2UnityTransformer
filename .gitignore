@@ -5,6 +5,7 @@
 !/.github/
 !/Packages/
 !/README.md
+!/LICENSE
 
 __pycache__/
 *.pyc
