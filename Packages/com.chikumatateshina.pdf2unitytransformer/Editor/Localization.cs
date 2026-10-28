@@ -27,6 +27,9 @@ namespace PDF2Unity.Editor
             if (stage == "starting") return "起動中";
             if (stage == "frontend") return "PDF を解析中";
             if (stage == "reference") return "基準画像を作成中";
+            if (stage == "render") return "画像を作成中";
+            if (stage == "write") return "データを書き出し中";
+            if (stage == "done") return "完了";
             if (stage.StartsWith("lower:")) return $"{Target(stage.Substring(6))} 用に変換中";
             return stage;
         }
@@ -70,8 +73,14 @@ namespace PDF2Unity.Editor
             ["limit.decoded"] = "展開後のデータ量の合計が上限を超えました。",
             ["limit.ops"] = "描画命令の数が上限を超えました。",
             ["limit.glyphs"] = "文字数が上限を超えました。",
-            ["internal"] = "コンパイラ内部でエラーが発生しました。",
-            ["timeout"] = "コンパイラが制限時間内に終了しませんでした。",
+            ["internal"] = "変換中に内部エラーが発生しました。",
+            ["input.repaired"] = "PDF の相互参照表が壊れていたため、修復して読み込みました。",
+            ["render.load"] = "PDFium が文書を読み込めませんでした。",
+            ["render.memory"] = "画像用のメモリを確保できませんでした。",
+            ["geometry.failed"] = "図形を三角形に分割できなかった部分を画像化しました。",
+            ["image.direct"] = "直接埋め込まれた画像ストリームを画像化しました。",
+            ["color.icc-approx"] = "ICC プロファイル付きのベクター色は、同じ系統のデバイス色空間で近似しています。",
+            ["content.filter"] = "未対応の圧縮形式の描画命令を読み飛ばしました。",
             // fonts / text
             ["font.not-embedded"] = "フォントが埋め込まれておらず代替フォントもないため、文字を画像化しました。",
             ["font.substituted"] = "非埋め込みフォントを代替フォントで表示しました（字形が異なります）。",
@@ -137,7 +146,7 @@ namespace PDF2Unity.Editor
             ["page.box"] = "ページ範囲の指定が不正なため MediaBox を使用しました。",
             ["page.rotate"] = "不正なページ回転を無視しました。",
             ["page.size-mismatch"] = "基準レンダラとページサイズが一致しません。",
-            ["fallback.regions"] = "一部の領域を画像化しました。",
+            ["fallback.regions"] = "直接描けない効果を、その効果が変化させた部分に限って画像化しました。",
             ["fallback.page"] = "ページ全体を画像化しました（ページ画像化モード）。",
             ["fallback.resolution"] = "画像化した領域の解像度をテクスチャ上限に合わせて下げました。",
             ["target.budget"] = "ターゲットの負荷上限を超えています。",

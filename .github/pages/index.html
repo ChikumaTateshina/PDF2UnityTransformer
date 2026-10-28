@@ -127,7 +127,7 @@
       </div>
       <div class="card">
         <h3>複雑な効果は部分的に画像化</h3>
-        <p>描画モードや透明グループなど直接描けない効果は、その領域だけを元の描画命令から画像化します。</p>
+        <p>描画モードや透明グループなど直接描けない効果は、その効果が変化させた部分だけを画像化。上に描かれた文字はベクターのままです。</p>
       </div>
       <div class="card">
         <h3>PC と Quest</h3>
@@ -141,7 +141,6 @@
     <ol class="steps">
       <li>上の <strong>Add to VCC</strong> を押すか、VCC の <span class="ui">Settings</span> → <span class="ui">Packages</span> → <span class="ui">Add Repository</span> に一覧の URL を追加します。</li>
       <li>プロジェクトの <span class="ui">Manage Project</span> で <strong>PDF2UnityTransformer</strong> を追加します。</li>
-      <li>変換作業をする PC に <a href="https://www.python.org/downloads/">Python 3.10 以上</a> を入れておきます（インストール時に「Add python.exe to PATH」を有効にしてください）。</li>
     </ol>
   </section>
 
@@ -149,8 +148,8 @@
     <h2>使い方</h2>
     <ol class="steps">
       <li><span class="ui">Tools</span> → <span class="ui">PDF2UnityTransformer</span> → <span class="ui">PDF 変換</span> を開きます。</li>
-      <li>初回だけ「変換環境（Python）」の <strong>準備する</strong> を押します。専用の Python 環境を作り、必要なライブラリを入れます。</li>
-      <li>PDF（参照ボタンかドラッグ＆ドロップ）と出力先（PC / Quest）を選んで <strong>変換する</strong>。診断を確認して <strong>Prefab を生成</strong> → <strong>シーンに配置</strong>。</li>
+      <li>PDF（参照ボタンかドラッグ＆ドロップ）、出力（PC / Quest）、Prefab の出力先フォルダを選びます。</li>
+      <li><strong>変換して Prefab を作成</strong> を押すと、変換から Prefab の作成まで一度に行います。あとは <strong>シーンに配置</strong>。</li>
     </ol>
   </section>
 
@@ -159,7 +158,7 @@
     <table>
       <tr><th>Unity</th><td>{{UNITY}}（VRChat ワールドプロジェクト）</td></tr>
       <tr><th>OS</th><td>Windows（変換作業を行う PC）</td></tr>
-      <tr><th>Python</th><td>3.10 以上。依存ライブラリは「準備する」で自動導入</td></tr>
+      <tr><th>追加ソフト</th><td>不要（C# だけで動作。画像処理用に PDFium を Editor 専用で同梱）</td></tr>
       <tr><th>出力</th><td>PC（Windows）/ Quest（Android）</td></tr>
     </table>
   </section>

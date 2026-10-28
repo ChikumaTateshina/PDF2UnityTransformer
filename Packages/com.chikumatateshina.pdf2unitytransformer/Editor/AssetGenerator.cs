@@ -19,6 +19,7 @@ namespace PDF2Unity.Editor
         public int SortingOrderBase = 0;
         public bool OverwriteUserEdits = false;
         public bool AllowFailedTarget = false;
+        public string OutputRoot = PdfUnitySettings.DefaultOutputFolder; // "Assets/..." folder chosen by the user
     }
 
     public sealed class GenerateReport
@@ -54,8 +55,11 @@ namespace PDF2Unity.Editor
 
         public static string TargetFolderName(string target) => target == "quest" ? "Quest" : "PC";
 
-        public static string FolderFor(ExchangePackage pkg, string target)
-            => $"{PdfUnitySettings.GeneratedRoot}/{SafeName(pkg.SourceName)}/{TargetFolderName(target)}";
+        public static string FolderFor(string outputRoot, ExchangePackage pkg, string target)
+        {
+            var root = string.IsNullOrEmpty(outputRoot) ? PdfUnitySettings.DefaultOutputFolder : outputRoot.Replace("\\", "/").TrimEnd('/');
+            return $"{root}/{SafeName(pkg.SourceName)}/{TargetFolderName(target)}";
+        }
 
         public static GenerateReport Generate(ExchangePackage pkg, string target, GenerateOptions opt)
         {
@@ -64,7 +68,9 @@ namespace PDF2Unity.Editor
             if (tinfo.Status == "fail" && !opt.AllowFailedTarget)
                 throw new InvalidOperationException(
                     $"{L.Target(target)} の確認に通らなかったため生成しません（{string.Join("; ", tinfo.BudgetFailures)}）。");
-            var rep = new GenerateReport { Folder = FolderFor(pkg, target) };
+            if (!PdfUnitySettings.IsAssetsFolder(opt.OutputRoot))
+                throw new InvalidOperationException("出力先は Assets フォルダ内を指定してください。");
+            var rep = new GenerateReport { Folder = FolderFor(opt.OutputRoot, pkg, target) };
             var folder = rep.Folder;
             foreach (var sub in new[] { "", "/Textures", "/Materials", "/Meshes", "/Pages" }) EnsureFolder(folder + sub);
             var record = Record.Load(folder);
@@ -229,8 +235,9 @@ namespace PDF2Unity.Editor
             if (imp == null) return;
             imp.textureType = TextureImporterType.Default;
             imp.sRGBTexture = true;
-            imp.alphaSource = composite ? TextureImporterAlphaSource.None : TextureImporterAlphaSource.FromInput;
-            imp.alphaIsTransparency = !composite;
+            // Delta composites carry alpha (only the pixels changed by an effect are opaque).
+            imp.alphaSource = TextureImporterAlphaSource.FromInput;
+            imp.alphaIsTransparency = true;
             imp.mipmapEnabled = true;
             imp.mipmapFilter = TextureImporterMipFilter.KaiserFilter;
             imp.wrapMode = TextureWrapMode.Clamp;

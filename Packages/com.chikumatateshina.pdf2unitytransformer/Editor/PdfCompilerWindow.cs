@@ -2,14 +2,16 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using PDF2Unity.Core;
+using PDF2Unity.Core.Geometry;
 using UnityEditor;
 using UnityEngine;
 
 namespace PDF2Unity.Editor
 {
     /// <summary>
-    /// Editor UI (FR-01, SPEC §8): choose PDF, pages, mode, targets and profiles, run the
-    /// external compiler, review diagnostics and generate prefabs.
+    /// Editor UI (FR-01, SPEC §8): one button converts the PDF in-process (C#) and generates prefabs into
+    /// the chosen folder. Diagnostics and target status are shown afterwards.
     /// </summary>
     public sealed class PdfCompilerWindow : EditorWindow
     {
@@ -22,19 +24,20 @@ namespace PDF2Unity.Editor
         };
         static readonly string[] ModeHelp =
         {
-            "文字・図形・画像はそのまま変換し、直接描けない効果だけをその領域で画像化します。",
+            "文字・図形・画像はそのまま変換し、直接描けない効果だけを、その効果が変化させた部分に限って画像化します。",
             "直接再現できない描画が 1 つでもあれば変換を中止します。",
             "画像化が必要なページはページ全体を画像にします（ベクター表示は失われます）。",
         };
+        static readonly string[] PcProfiles = { "pc-standard", "pc-high" };
+        static readonly GUIContent[] PcProfileNames = { new GUIContent("標準"), new GUIContent("高品質") };
 
         [SerializeField] string pdfPath = "";
         [SerializeField] string pages = "all";
         [SerializeField] int modeIndex;
         [SerializeField] bool targetPc = true;
         [SerializeField] bool targetQuest;
-        [SerializeField] string profilePc = "pc-standard";
-        [SerializeField] string profileQuest = "quest-standard";
-        [SerializeField] string cmykProfile = "";
+        [SerializeField] int pcProfile;
+        [SerializeField] string outputFolder = PdfUnitySettings.DefaultOutputFolder;
         [SerializeField] string substituteFonts = "";
         [SerializeField] bool fontRightsDeclared;
         [SerializeField] bool precomposeTranslucent;
@@ -43,50 +46,27 @@ namespace PDF2Unity.Editor
         [SerializeField] Color paperColor = Color.white;
         [SerializeField] bool advanced;
         [SerializeField] bool showInfo;
+        [SerializeField] bool placeAfterGenerate;
 
-        CompilerProcess running;
+        ConversionRunner running;
         string packageDir;
         ExchangePackage loaded;
-        Vector2 scroll, logScroll;
+        Vector2 scroll;
         string lastError;
         readonly List<string> generatedMessages = new List<string>();
-
-        PythonEnvironment envSetup;
-        string envStatus;
-        bool envReady;
+        readonly Dictionary<string, string> generatedPrefabs = new Dictionary<string, string>();
 
         [MenuItem(PdfUnitySettings.MenuRoot + "PDF 変換")]
         public static void Open() => GetWindow<PdfCompilerWindow>(PdfUnitySettings.ProductName);
-
-        void OnEnable() => RefreshEnvironment();
 
         void OnDisable()
         {
             running?.Dispose();
             running = null;
-            envSetup?.Dispose();
-            envSetup = null;
         }
-
-        void RefreshEnvironment() => envReady = PythonEnvironment.IsReady(out envStatus);
 
         void Update()
         {
-            if (envSetup != null)
-            {
-                if (!envSetup.Tick())
-                {
-                    if (!envSetup.Succeeded)
-                    {
-                        lastError = $"Python 環境の準備に失敗しました（{envSetup.Step}）。詳細はコンソールを確認してください。";
-                        Debug.LogError($"[{PdfUnitySettings.ProductName}] {lastError}\n{envSetup.Log}");
-                    }
-                    envSetup.Dispose();
-                    envSetup = null;
-                    RefreshEnvironment();
-                }
-                Repaint();
-            }
             if (running == null) return;
             if (!running.Tick()) OnFinished();
             Repaint();
@@ -103,30 +83,24 @@ namespace PDF2Unity.Editor
             modeIndex = EditorGUILayout.Popup(new GUIContent("変換モード"), modeIndex, ModeNames);
             EditorGUILayout.HelpBox(ModeHelp[modeIndex], MessageType.None);
 
-            Section("2. 出力先");
+            Section("2. 出力");
             using (new EditorGUILayout.HorizontalScope())
             {
                 targetPc = EditorGUILayout.ToggleLeft("PC（Windows）", targetPc, GUILayout.Width(130));
                 using (new EditorGUI.DisabledScope(!targetPc))
-                    profilePc = EditorGUILayout.TextField(new GUIContent("", "品質プロファイル（pc-standard / pc-high）"), profilePc);
+                    pcProfile = EditorGUILayout.Popup(pcProfile, PcProfileNames);
             }
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                targetQuest = EditorGUILayout.ToggleLeft("Quest（Android）", targetQuest, GUILayout.Width(130));
-                using (new EditorGUI.DisabledScope(!targetQuest))
-                    profileQuest = EditorGUILayout.TextField(new GUIContent("", "品質プロファイル（quest-standard）"), profileQuest);
-            }
+            targetQuest = EditorGUILayout.ToggleLeft("Quest（Android）", targetQuest);
+            OutputFolderField();
             worldScale = EditorGUILayout.FloatField(
                 new GUIContent("Prefab の大きさ", "1 のとき 72pt = 1 ユニット。0.0254 で実寸（メートル）になります。"), worldScale);
             paperColor = EditorGUILayout.ColorField("紙の色", paperColor);
+            placeAfterGenerate = EditorGUILayout.ToggleLeft("作成後にシーンへ配置する", placeAfterGenerate);
 
             Section("3. 色・フォント・権利");
-            cmykProfile = PathField("CMYK の ICC プロファイル", "任意。指定すると CMYK をこのプロファイルで変換します。",
-                                    cmykProfile, new[] { "ICC プロファイル", "icc,icm" }, false);
-            substituteFonts = PathField("代替フォント", "任意。利用許諾のある .ttf/.otf を入れたフォルダ、または substitutes.json",
-                                        substituteFonts, new[] { "JSON", "json" }, true);
+            substituteFonts = FolderField("代替フォントのフォルダ", "任意。埋め込まれていないフォントの代わりに使う、利用許諾のある .ttf/.otf を入れたフォルダ", substituteFonts);
             precomposeTranslucent = EditorGUILayout.ToggleLeft(
-                new GUIContent("半透明を画像化する", "Linear 色空間では半透明の重なりの色が PDF とわずかに異なります。オンにすると該当領域を画像化して一致させます。"),
+                new GUIContent("半透明を画像化する", "Linear 色空間では半透明の重なりの色が PDF とわずかに異なります。オンにすると該当部分を画像化して一致させます。"),
                 precomposeTranslucent);
             fontRightsDeclared = EditorGUILayout.ToggleLeft("埋め込みフォントの輪郭をワールドで使う権利を持っている", fontRightsDeclared);
             EditorGUILayout.HelpBox(
@@ -135,50 +109,35 @@ namespace PDF2Unity.Editor
                 MessageType.Info);
             overwriteUserEdits = EditorGUILayout.ToggleLeft("手で編集した生成アセットも上書きする", overwriteUserEdits);
 
-            Section("4. 変換環境（Python）");
-            DrawEnvironment();
-
             EditorGUILayout.Space(8);
             if (running != null)
             {
                 var r = EditorGUILayout.GetControlRect(false, 22);
-                EditorGUI.ProgressBar(r, running.Progress01, $"{L.Stage(running.Stage)}  {running.Progress01 * 100:0}%");
-                if (GUILayout.Button("中止")) { running.Cancel(); OnFinished(); }
+                var job = running.Job;
+                EditorGUI.ProgressBar(r, job.Progress, $"{L.Stage(job.Stage)}  {job.Progress * 100:0}%  {job.Detail}");
+                if (GUILayout.Button("中止")) running.Cancel();
             }
             else
             {
-                var reason = CompileBlocker();
+                var reason = Blocker();
                 using (new EditorGUI.DisabledScope(reason != null))
-                    if (GUILayout.Button("変換する", GUILayout.Height(30))) StartCompile();
+                    if (GUILayout.Button("変換して Prefab を作成", GUILayout.Height(32))) StartConvert();
                 if (reason != null) EditorGUILayout.LabelField(reason, EditorStyles.miniLabel);
-                if (GUILayout.Button("変換済みのデータを開く…"))
-                {
-                    var d = EditorUtility.OpenFolderPanel("変換済みデータのフォルダを選択", PathUtil.InitialDirectory(PdfUnitySettings.CacheRoot), "");
-                    if (!string.IsNullOrEmpty(d)) LoadPackage(d);
-                    GUIUtility.ExitGUI();
-                }
             }
             if (!string.IsNullOrEmpty(lastError)) EditorGUILayout.HelpBox(lastError, MessageType.Error);
-            if (loaded != null) DrawPackage();
+            if (loaded != null) DrawResult();
             foreach (var m in generatedMessages) EditorGUILayout.HelpBox(m, MessageType.Warning);
-            if (running != null)
-            {
-                EditorGUILayout.LabelField("ログ", EditorStyles.boldLabel);
-                logScroll = EditorGUILayout.BeginScrollView(logScroll, GUILayout.Height(120));
-                EditorGUILayout.TextArea(running.Log.ToString(), EditorStyles.wordWrappedMiniLabel);
-                EditorGUILayout.EndScrollView();
-            }
 
             advanced = EditorGUILayout.Foldout(advanced, "詳細設定", true);
             if (advanced)
             {
-                PdfUnitySettings.BasePythonExe = EditorGUILayout.TextField(
-                    new GUIContent("元にする Python", "環境の作成に使う python.exe（空欄なら自動検出）"), PdfUnitySettings.BasePythonExe);
-                PdfUnitySettings.PythonExe = EditorGUILayout.TextField(
-                    new GUIContent("変換に使う Python", "通常は自動で作成した環境を使います"), PdfUnitySettings.PythonExe);
-                PdfUnitySettings.CompilerDir = EditorGUILayout.TextField(
-                    new GUIContent("コンパイラのフォルダ", "通常はパッケージ同梱の Compiler~"), PdfUnitySettings.CompilerDir);
                 PdfUnitySettings.TimeoutSec = EditorGUILayout.IntField("制限時間（秒）", PdfUnitySettings.TimeoutSec);
+                if (GUILayout.Button("変換済みのデータから Prefab だけ作り直す…"))
+                {
+                    var d = EditorUtility.OpenFolderPanel("変換済みデータのフォルダを選択", PathUtil.InitialDirectory(PdfUnitySettings.CacheRoot), "");
+                    if (!string.IsNullOrEmpty(d) && LoadPackage(d)) GenerateAll();
+                    GUIUtility.ExitGUI();
+                }
             }
             EditorGUILayout.EndScrollView();
         }
@@ -189,13 +148,13 @@ namespace PDF2Unity.Editor
             EditorGUILayout.LabelField(title, EditorStyles.boldLabel);
         }
 
-        string CompileBlocker()
+        string Blocker()
         {
-            if (envSetup != null) return "Python 環境を準備しています…";
-            if (!envReady) return "先に「4. 変換環境」で準備を行ってください。";
             if (string.IsNullOrWhiteSpace(pdfPath)) return "PDF ファイルを選んでください。";
             if (!File.Exists(PathUtil.Clean(pdfPath))) return "PDF ファイルが見つかりません。";
-            if (!(targetPc || targetQuest)) return "出力先を 1 つ以上選んでください。";
+            if (!(targetPc || targetQuest)) return "出力先（PC / Quest）を 1 つ以上選んでください。";
+            if (!PdfUnitySettings.IsAssetsFolder(outputFolder)) return "出力先フォルダは Assets フォルダ内を指定してください。";
+            if (Application.platform != RuntimePlatform.WindowsEditor) return "現在は Windows 版 Unity Editor のみ対応しています。";
             return null;
         }
 
@@ -204,8 +163,7 @@ namespace PDF2Unity.Editor
             using (new EditorGUILayout.HorizontalScope())
             {
                 pdfPath = EditorGUILayout.TextField(new GUIContent("PDF ファイル", "ここに PDF をドラッグ＆ドロップすることもできます"), pdfPath);
-                var fieldRect = GUILayoutUtility.GetLastRect();
-                HandleDrop(fieldRect);
+                HandleDrop(GUILayoutUtility.GetLastRect());
                 if (GUILayout.Button("参照…", GUILayout.Width(64)))
                 {
                     var p = EditorUtility.OpenFilePanelWithFilters("PDF ファイルを選択", PathUtil.InitialDirectory(pdfPath),
@@ -213,7 +171,39 @@ namespace PDF2Unity.Editor
                     if (!string.IsNullOrEmpty(p))
                     {
                         pdfPath = p;
-                        GUI.FocusControl(null);   // otherwise a focused text field keeps its old text
+                        GUI.FocusControl(null);
+                    }
+                    GUIUtility.ExitGUI();
+                }
+            }
+        }
+
+        void OutputFolderField()
+        {
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                outputFolder = EditorGUILayout.TextField(new GUIContent("出力先フォルダ", "Assets 内のフォルダ。<フォルダ>/<文書名>/PC|Quest/ に Prefab を作成します"), outputFolder);
+                var rect = GUILayoutUtility.GetLastRect();
+                var e = Event.current;
+                if ((e.type == EventType.DragUpdated || e.type == EventType.DragPerform) && rect.Contains(e.mousePosition))
+                {
+                    var path = DragAndDrop.paths?.FirstOrDefault(p => AssetDatabase.IsValidFolder(p));
+                    if (path != null)
+                    {
+                        DragAndDrop.visualMode = DragAndDropVisualMode.Copy;
+                        if (e.type == EventType.DragPerform) { DragAndDrop.AcceptDrag(); outputFolder = path; GUI.FocusControl(null); }
+                        e.Use();
+                    }
+                }
+                if (GUILayout.Button("参照…", GUILayout.Width(64)))
+                {
+                    var start = AssetDatabase.IsValidFolder(outputFolder) ? Path.GetFullPath(outputFolder) : Application.dataPath;
+                    var p = EditorUtility.OpenFolderPanel("Prefab の出力先フォルダ（Assets 内）", start, "");
+                    if (!string.IsNullOrEmpty(p))
+                    {
+                        var rel = PdfUnitySettings.ToProjectRelative(p);
+                        if (rel == null) EditorUtility.DisplayDialog(PdfUnitySettings.ProductName, "出力先は、このプロジェクトの Assets フォルダ内を選んでください。", "OK");
+                        else { outputFolder = rel; GUI.FocusControl(null); }
                     }
                     GUIUtility.ExitGUI();
                 }
@@ -236,87 +226,52 @@ namespace PDF2Unity.Editor
             e.Use();
         }
 
-        static string PathField(string label, string tooltip, string value, string[] filters, bool folderAllowed)
+        static string FolderField(string label, string tooltip, string value)
         {
             using (new EditorGUILayout.HorizontalScope())
             {
                 value = EditorGUILayout.TextField(new GUIContent(label, tooltip), value);
                 if (GUILayout.Button("参照…", GUILayout.Width(64)))
                 {
-                    var start = PathUtil.InitialDirectory(value);
-                    string p;
-                    if (folderAllowed)
-                    {
-                        var choice = EditorUtility.DisplayDialogComplex(label, "フォルダとファイルのどちらを選びますか？", "フォルダ", "キャンセル", "ファイル");
-                        p = choice == 0 ? EditorUtility.OpenFolderPanel(label, start, "")
-                            : choice == 2 ? EditorUtility.OpenFilePanelWithFilters(label, start, filters) : null;
-                    }
-                    else p = EditorUtility.OpenFilePanelWithFilters(label, start, filters);
-                    if (!string.IsNullOrEmpty(p))
-                    {
-                        value = p;
-                        GUI.FocusControl(null);
-                    }
+                    var p = EditorUtility.OpenFolderPanel(label, PathUtil.InitialDirectory(value), "");
+                    if (!string.IsNullOrEmpty(p)) { value = p; GUI.FocusControl(null); }
                     GUIUtility.ExitGUI();
                 }
             }
             return value;
         }
 
-        void DrawEnvironment()
-        {
-            if (envSetup != null)
-            {
-                var r = EditorGUILayout.GetControlRect(false, 22);
-                EditorGUI.ProgressBar(r, 0.5f, envSetup.Step + "…");
-                return;
-            }
-            EditorGUILayout.HelpBox(envReady ? envStatus :
-                envStatus + $"\n「準備する」を押すと、{PdfUnitySettings.EnvironmentDir} に専用の Python 環境を作り、" +
-                $"必要なライブラリを PyPI から導入します（Python {PythonEnvironment.MinMajor}.{PythonEnvironment.MinMinor} 以上が必要です）。",
-                envReady ? MessageType.Info : MessageType.Warning);
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                if (GUILayout.Button(envReady ? "再インストール / 更新" : "準備する"))
-                {
-                    lastError = null;
-                    try { envSetup = PythonEnvironment.Setup(); }
-                    catch (Exception e) { lastError = e.Message; }
-                }
-                if (GUILayout.Button("状態を確認", GUILayout.Width(90))) RefreshEnvironment();
-            }
-        }
-
         // ------------------------------------------------------------------------------------
-        void StartCompile()
+        void StartConvert()
         {
             lastError = null;
             loaded = null;
             generatedMessages.Clear();
+            generatedPrefabs.Clear();
             var input = Path.GetFullPath(PathUtil.Clean(pdfPath));
             var name = AssetGenerator.SafeName(Path.GetFileNameWithoutExtension(input));
             packageDir = Path.GetFullPath(Path.Combine(PdfUnitySettings.CacheRoot, name));
             Directory.CreateDirectory(Path.GetDirectoryName(packageDir));
-            var req = new CompileRequest
+            var targets = new List<Profile>();
+            if (targetPc) targets.Add(Profile.ByName(PcProfiles[pcProfile]));
+            if (targetQuest) targets.Add(Profile.QuestStandard());
+            var opts = new CompileOptions
             {
-                InputPdf = input,
-                OutputDir = packageDir,
+                Input = input,
+                Output = packageDir,
                 Pages = pages,
                 Mode = Modes[modeIndex],
-                Targets = new List<string>(),
-                ProfilePc = profilePc,
-                ProfileQuest = profileQuest,
-                CmykProfile = string.IsNullOrWhiteSpace(cmykProfile) ? null : PathUtil.Clean(cmykProfile),
-                SubstituteFonts = string.IsNullOrWhiteSpace(substituteFonts) ? null : PathUtil.Clean(substituteFonts),
+                Targets = targets,
+                SubstituteFontDir = string.IsNullOrWhiteSpace(substituteFonts) ? null : PathUtil.Clean(substituteFonts),
                 FontRightsDeclared = fontRightsDeclared,
                 PrecomposeTranslucent = precomposeTranslucent,
                 WorldScale = worldScale,
-                TimeoutSec = PdfUnitySettings.TimeoutSec,
+                CacheDir = Path.GetFullPath(PdfUnitySettings.ToolCache),
+                ReferenceDpi = 72,
+                Limits = new Limits { TimeoutSec = PdfUnitySettings.TimeoutSec },
             };
-            if (targetPc) req.Targets.Add("pc");
-            if (targetQuest) req.Targets.Add("quest");
-            try { running = new CompilerProcess(req); }
-            catch (Exception e) { lastError = $"コンパイラを起動できませんでした: {e.Message}"; running = null; }
+            try { running = new ConversionRunner(opts); }
+            catch (Exception e) { lastError = $"変換を開始できませんでした: {e.Message}"; running = null; }
         }
 
         void OnFinished()
@@ -326,36 +281,82 @@ namespace PDF2Unity.Editor
             if (r == null) return;
             switch (r.Current)
             {
-                case CompilerProcess.State.Succeeded:
-                    LoadPackage(packageDir);
+                case ConversionRunner.State.Succeeded:
+                    if (LoadPackage(packageDir)) GenerateAll();
                     break;
-                case CompilerProcess.State.Cancelled:
+                case ConversionRunner.State.Cancelled:
                     lastError = "変換を中止しました。";
                     break;
                 default:
-                    var jp = L.Code(r.ErrorCode);
-                    lastError = $"変換に失敗しました。{jp}\n[{r.ErrorCode}] {r.ErrorMessage}";
-                    Debug.LogError($"[{PdfUnitySettings.ProductName}] {lastError}\n{r.Log}");
+                    lastError = $"変換に失敗しました。{L.Code(r.ErrorCode)}\n[{r.ErrorCode}] {r.ErrorMessage}";
+                    Debug.LogError($"[{PdfUnitySettings.ProductName}] {lastError}");
                     break;
             }
             r.Dispose();
         }
 
-        void LoadPackage(string dir)
+        bool LoadPackage(string dir)
         {
             try
             {
                 loaded = new ExchangePackage(dir);
                 packageDir = dir;
+                return true;
             }
             catch (Exception e)
             {
                 loaded = null;
-                lastError = $"変換済みデータを読み込めません: {e.Message}";
+                lastError = $"変換データを読み込めません: {e.Message}";
+                return false;
             }
         }
 
-        void DrawPackage()
+        void GenerateAll()
+        {
+            generatedMessages.Clear();
+            generatedPrefabs.Clear();
+            foreach (var t in loaded.Targets.Values)
+            {
+                if (t.Status == "fail")
+                {
+                    generatedMessages.Add($"{L.Target(t.Name)}: 負荷や品質の確認に通らなかったため Prefab を作成しませんでした。");
+                    continue;
+                }
+                try
+                {
+                    var rep = AssetGenerator.Generate(loaded, t.Name, new GenerateOptions
+                    {
+                        OverwriteUserEdits = overwriteUserEdits,
+                        PaperColor = paperColor,
+                        OutputRoot = outputFolder,
+                    });
+                    generatedMessages.AddRange(rep.Messages);
+                    generatedPrefabs[t.Name] = rep.DocumentPrefab;
+                    Debug.Log($"[{PdfUnitySettings.ProductName}] {L.Target(t.Name)}: {rep.DocumentPrefab} を作成しました（{rep.Written.Count} 件を書き込み）。");
+                }
+                catch (Exception e)
+                {
+                    lastError = $"Prefab の作成に失敗しました（{L.Target(t.Name)}）: {e.Message}";
+                    Debug.LogException(e);
+                }
+            }
+            var first = generatedPrefabs.TryGetValue(TargetSwitcher.ActiveTargetFolder == "Quest" ? "quest" : "pc", out var p) ? p : generatedPrefabs.Values.FirstOrDefault();
+            var asset = first != null ? AssetDatabase.LoadAssetAtPath<GameObject>(first) : null;
+            if (asset != null)
+            {
+                EditorGUIUtility.PingObject(asset);
+                if (placeAfterGenerate) Place(asset);
+            }
+        }
+
+        static void Place(GameObject prefab)
+        {
+            var inst = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
+            Undo.RegisterCreatedObjectUndo(inst, "PDF 文書を配置");
+            Selection.activeGameObject = inst;
+        }
+
+        void DrawResult()
         {
             Section($"結果: {loaded.SourceName}");
             foreach (var t in loaded.Targets.Values)
@@ -368,29 +369,24 @@ namespace PDF2Unity.Editor
                     lines.Add(t.Status == "fail" ? "Quest には対応できません。この文書は PC 専用にしてください。"
                                                  : "実機で表示と負荷を確認してから「実機確認済み」にしてください。");
                 EditorGUILayout.HelpBox(string.Join("\n", lines), type);
+                generatedPrefabs.TryGetValue(t.Name, out var prefabPath);
+                var doc = prefabPath != null ? AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath) : null;
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    using (new EditorGUI.DisabledScope(t.Status == "fail"))
-                        if (GUILayout.Button($"{L.Target(t.Name)} 用 Prefab を生成")) Generate(t.Name);
-                    var folder = AssetGenerator.FolderFor(loaded, t.Name);
-                    var doc = AssetDatabase.LoadAssetAtPath<GameObject>($"{folder}/Document.prefab");
+                    using (new EditorGUI.DisabledScope(true))
+                        EditorGUILayout.ObjectField(doc, typeof(GameObject), false);
                     using (new EditorGUI.DisabledScope(doc == null))
-                        if (GUILayout.Button("シーンに配置"))
-                        {
-                            var inst = (GameObject)PrefabUtility.InstantiatePrefab(doc);
-                            Undo.RegisterCreatedObjectUndo(inst, "PDF 文書を配置");
-                            Selection.activeGameObject = inst;
-                        }
+                        if (GUILayout.Button("シーンに配置", GUILayout.Width(100))) Place(doc);
                     if (t.Name == "quest" && doc != null)
                     {
+                        var folder = Path.GetDirectoryName(prefabPath).Replace('\\', '/');
                         var rec = AssetGenerator.Record.Load(folder);
-                        var v = GUILayout.Toggle(rec.DeviceVerified, "実機確認済み", "Button");
+                        var v = GUILayout.Toggle(rec.DeviceVerified, "実機確認済み", "Button", GUILayout.Width(100));
                         if (v != rec.DeviceVerified) { rec.DeviceVerified = v; rec.Save(folder); }
                     }
                 }
             }
             DrawDiagnostics();
-            if (GUILayout.Button("変換データのフォルダを開く")) EditorUtility.RevealInFinder(Path.Combine(packageDir, "manifest.json"));
         }
 
         void DrawDiagnostics()
@@ -413,35 +409,11 @@ namespace PDF2Unity.Editor
             var sev = J.Str(m, "severity");
             var code = J.Str(m, "code");
             var page = (int)J.Num(m, "page", 0);
-            var fb = L.Fallback(J.Str(m, "fallback"));
             var count = (int)J.Num(m, "occurrences", 1);
             var head = (page > 0 ? $"{page} ページ: " : "") + (L.Code(code) ?? J.Str(m, "message"));
-            if (fb != null && L.Code(code) == null) head += $"（{fb}）";
             if (count > 1) head += $"（{count} 回）";
-            var text = $"{head}\n[{code}] {J.Str(m, "message")}";
-            EditorGUILayout.HelpBox(text, sev == "error" ? MessageType.Error : sev == "warning" ? MessageType.Warning : MessageType.None);
-        }
-
-        void Generate(string target)
-        {
-            generatedMessages.Clear();
-            try
-            {
-                var rep = AssetGenerator.Generate(loaded, target, new GenerateOptions
-                {
-                    OverwriteUserEdits = overwriteUserEdits,
-                    PaperColor = paperColor,
-                });
-                generatedMessages.AddRange(rep.Messages);
-                Debug.Log($"[{PdfUnitySettings.ProductName}] {L.Target(target)}: {rep.Written.Count} 件を書き込み、" +
-                          $"{rep.Removed.Count} 件を削除、手動編集された {rep.SkippedUserEdited.Count} 件を保持しました（{rep.Folder}）");
-                EditorGUIUtility.PingObject(AssetDatabase.LoadAssetAtPath<GameObject>(rep.DocumentPrefab));
-            }
-            catch (Exception e)
-            {
-                lastError = $"Prefab の生成に失敗しました: {e.Message}";
-                Debug.LogException(e);
-            }
+            EditorGUILayout.HelpBox($"{head}\n[{code}] {J.Str(m, "message")}",
+                sev == "error" ? MessageType.Error : sev == "warning" ? MessageType.Warning : MessageType.None);
         }
     }
 
