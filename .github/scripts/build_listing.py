@@ -1,4 +1,4 @@
-"""Build the VPM listing (index.json) and a small install page from the GitHub releases.
+"""Build the VPM listing (index.json) and the install/intro page (.github/pages/index.html) from the releases.
 
 usage: python build_listing.py <owner/repo> <outdir>
 Each release must contain package.json and <package-id>-<version>.zip (see release.yml).
@@ -59,20 +59,24 @@ def main():
     with open(os.path.join(out, "index.json"), "w", encoding="utf-8") as f:
         json.dump(listing, f, ensure_ascii=False, indent=2)
     open(os.path.join(out, ".nojekyll"), "w").close()
-    add = f"vcc://vpm/addRepo?url={base}/index.json"
-    html = f"""<!doctype html>
-<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{LISTING_NAME} VPM</title>
-<style>body{{font-family:system-ui,sans-serif;max-width:640px;margin:48px auto;padding:0 16px;line-height:1.6}}
-code{{background:#eee;padding:2px 6px;border-radius:4px;word-break:break-all}}
-a.button{{display:inline-block;padding:10px 18px;background:#2563eb;color:#fff;border-radius:6px;text-decoration:none}}</style>
-</head><body>
-<h1>{LISTING_NAME}</h1>
-<p><a class="button" href="{add}">Add to VCC</a></p>
-<p>VRChat Creator Companion &gt; Settings &gt; Packages &gt; Add Repository:<br><code>{base}/index.json</code></p>
-<p><a href="https://github.com/{repo}">GitHub</a></p>
-</body></html>
-"""
+    latest = "-"
+    unity = "2022.3"
+    versions = [v for p in packages.values() for v in p["versions"].values()]
+    if versions:
+        newest = max(versions, key=lambda m: tuple(int(x) if x.isdigit() else 0
+                                                   for x in m["version"].split("-")[0].split(".")))
+        latest, unity = newest["version"], newest.get("unity", unity)
+    template = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pages", "index.html")
+    with open(template, encoding="utf-8") as f:
+        html = f.read()
+    for key, value in {
+        "VCC_URL": f"vcc://vpm/addRepo?url={base}/index.json",
+        "LISTING_URL": f"{base}/index.json",
+        "REPO_URL": f"https://github.com/{repo}",
+        "LATEST_VERSION": latest,
+        "UNITY": unity,
+    }.items():
+        html = html.replace("{{" + key + "}}", value)
     with open(os.path.join(out, "index.html"), "w", encoding="utf-8") as f:
         f.write(html)
 

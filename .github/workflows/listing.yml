@@ -13,6 +13,7 @@ on:
     paths:
       - ".github/workflows/listing.yml"
       - ".github/scripts/build_listing.py"
+      - ".github/pages/**"
 
 permissions:
   contents: read
