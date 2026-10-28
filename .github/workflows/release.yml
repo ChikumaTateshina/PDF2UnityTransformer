@@ -1,0 +1,80 @@
+name: Release and VPM listing
+
+# Push a tag equal to Packages/<id>/package.json "version" (e.g. 0.1.0) to publish a release.
+# Every run rebuilds the VPM listing (index.json) from all releases and deploys it to the gh-pages branch:
+#   https://chikumatateshina.github.io/PDF2UnityTransformer/index.json
+on:
+  push:
+    tags: ["[0-9]+.[0-9]+.[0-9]+*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  PACKAGE_ID: com.chikumatateshina.pdf2unitytransformer
+
+jobs:
+  release:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check version
+        id: version
+        run: |
+          VERSION=$(jq -r .version "Packages/$PACKAGE_ID/package.json")
+          if [ "$VERSION" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $VERSION"; exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build package zip
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          ZIP="$PACKAGE_ID-$VERSION.zip"
+          URL="https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION/$ZIP"
+          cd "Packages/$PACKAGE_ID"
+          jq --arg url "$URL" '.url = $url' package.json > "$RUNNER_TEMP/package.json"
+          cp "$RUNNER_TEMP/package.json" package.json
+          zip -r -X "$GITHUB_WORKSPACE/$ZIP" . -x '*__pycache__*' '*.pyc'
+          cp package.json "$GITHUB_WORKSPACE/package.json"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "$VERSION" "$PACKAGE_ID-$VERSION.zip" package.json \
+            --title "$VERSION" \
+            --notes "Add the VPM listing to VRChat Creator Companion: https://chikumatateshina.github.io/PDF2UnityTransformer/index.json"
+
+  listing:
+    needs: release
+    if: always() && (needs.release.result == 'success' || needs.release.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build listing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/build_listing.py "$GITHUB_REPOSITORY" site
+
+      - name: Deploy to gh-pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd site
+          git init -q -b gh-pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "VPM listing for $GITHUB_SHA"
+          git push -f "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git" gh-pages

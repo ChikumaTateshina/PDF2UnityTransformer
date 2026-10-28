@@ -1,0 +1,16 @@
+{
+  "name": "com.chikumatateshina.pdf2unitytransformer",
+  "displayName": "PDF2UnityTransformer",
+  "version": "0.1.0",
+  "unity": "2022.3",
+  "description": "Converts PDF documents into static meshes, textures, materials and prefabs in the Unity Editor (no runtime PDF parsing, no scripts, no Udon in the world). Requires Python 3.10+ on the editing PC.",
+  "author": {
+    "name": "ChikumaTateshina",
+    "url": "https://github.com/ChikumaTateshina"
+  },
+  "documentationUrl": "https://github.com/ChikumaTateshina/PDF2UnityTransformer#readme",
+  "keywords": ["pdf", "vrchat", "world", "static", "prefab"],
+  "vpmDependencies": {},
+  "legacyFolders": {},
+  "url": ""
+}

@@ -1,0 +1,10 @@
+# Published repository = VPM package + release workflow only.
+# Everything else in this working copy (specs, tests, tools, Unity host project, builds) stays local.
+/*
+!/.gitignore
+!/.github/
+!/Packages/
+!/README.md
+
+__pycache__/
+*.pyc
