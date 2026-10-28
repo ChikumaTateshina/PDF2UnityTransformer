@@ -1,7 +1,7 @@
 name: Release and VPM listing
 
 # Push a tag equal to Packages/<id>/package.json "version" (e.g. 0.1.0) to publish a release.
-# Every run rebuilds the VPM listing (index.json) from all releases and deploys it to the gh-pages branch:
+# Every run rebuilds the VPM listing (index.json) from all releases and deploys it to GitHub Pages:
 #   https://chikumatateshina.github.io/PDF2UnityTransformer/index.json
 on:
   push:
@@ -55,10 +55,18 @@ jobs:
             --title "$VERSION" \
             --notes "Add the VPM listing to VRChat Creator Companion: https://chikumatateshina.github.io/PDF2UnityTransformer/index.json"
 
+  # Requires Settings > Pages > Build and deployment > Source = "GitHub Actions" (one-time).
   listing:
     needs: release
     if: always() && (needs.release.result == 'success' || needs.release.result == 'skipped')
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
 
@@ -67,14 +75,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 .github/scripts/build_listing.py "$GITHUB_REPOSITORY" site
 
-      - name: Deploy to gh-pages
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          cd site
-          git init -q -b gh-pages
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -q -m "VPM listing for $GITHUB_SHA"
-          git push -f "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git" gh-pages
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
