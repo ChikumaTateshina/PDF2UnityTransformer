@@ -282,7 +282,7 @@ namespace PDF2Unity.Editor
             generatedMessages.Clear();
             generatedPrefabs.Clear();
             var input = Path.GetFullPath(PathUtil.Clean(pdfPath));
-            var name = AssetGenerator.SafeName(Path.GetFileNameWithoutExtension(input));
+            var name = AssetGenerator.FileName(Path.GetFileNameWithoutExtension(input));
             packageDir = Path.GetFullPath(Path.Combine(PdfUnitySettings.CacheRoot, name));
             Directory.CreateDirectory(Path.GetDirectoryName(packageDir));
             try { running = new ConversionRunner(Options(input, packageDir, Targets())); }

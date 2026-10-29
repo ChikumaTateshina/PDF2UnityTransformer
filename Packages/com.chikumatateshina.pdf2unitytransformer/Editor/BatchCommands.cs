@@ -42,7 +42,7 @@ namespace PDF2Unity.Editor
             EditorApplication.Exit(code);
         }
 
-        /// <summary>Prints the download size a generated prefab adds to a world: -p2uPrefab Assets/.../Document.prefab [-p2uTarget pc|quest].</summary>
+        /// <summary>Prints the download size a generated prefab adds to a world: -p2uPrefab Assets/.../&lt;source name&gt;.prefab [-p2uTarget pc|quest].</summary>
         public static void MeasureWorldSize()
         {
             int code = 0;
@@ -66,7 +66,7 @@ namespace PDF2Unity.Editor
                 var pdf = Arg("-p2uPdf") ?? throw new ArgumentException("-p2uPdf required");
                 var targets = new List<Profile>();
                 foreach (var t in Arg("-p2uTargets", "pc").Split(',')) targets.Add(t.Trim() == "quest" ? Profile.QuestStandard() : Profile.PcStandard());
-                var name = AssetGenerator.SafeName(Path.GetFileNameWithoutExtension(pdf));
+                var name = AssetGenerator.FileName(Path.GetFileNameWithoutExtension(pdf));
                 var pkgDir = Path.GetFullPath(Arg("-p2uPackage", Path.Combine(PdfUnitySettings.CacheRoot, name)));
                 var opts = new CompileOptions
                 {

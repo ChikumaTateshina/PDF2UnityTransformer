@@ -34,7 +34,7 @@ namespace PDF2Unity.Editor
 
     /// <summary>
     /// Generates Unity assets from an Asset Exchange Package (SPEC §8):
-    /// Textures/, Materials/, Meshes/, Pages/Page_NNNN.prefab and Document.prefab under
+    /// Textures/, Materials/, Meshes/, Pages/Page_NNNN.prefab and &lt;source file name&gt;.prefab under
     /// Assets/PDF2Unity/Generated/&lt;Document&gt;/&lt;Target&gt;/. Existing assets are updated in place
     /// (GUIDs and scene references survive recompiles). Files whose content no longer matches
     /// the hash recorded at generation time were edited by the user and are never overwritten
@@ -47,18 +47,58 @@ namespace PDF2Unity.Editor
         public const string ShaderTextured = "PDF2Unity/Textured";
         public const string ShaderPaper = "PDF2Unity/Paper";
 
-        public static string SafeName(string s)
+        /// <summary>Name of 0.2.0 and earlier document folders (ASCII only); used to carry them over.</summary>
+        static string LegacyFolderName(string s)
         {
             var n = Regex.Replace(s ?? "Document", @"[^A-Za-z0-9_\-]+", "_").Trim('_');
             return string.IsNullOrEmpty(n) ? "Document" : (n.Length > 48 ? n.Substring(0, 48) : n);
         }
 
+        /// <summary>The source file name kept as is (Japanese included), only characters a file name cannot hold replaced.</summary>
+        public static string FileName(string s)
+        {
+            var bad = Path.GetInvalidFileNameChars();
+            var n = new string((s ?? "").Select(c => Array.IndexOf(bad, c) >= 0 ? '_' : c).ToArray()).Trim().TrimEnd('.');
+            return string.IsNullOrEmpty(n) ? "Document" : n;
+        }
+
         public static string TargetFolderName(string target) => target == "quest" ? "Quest" : "PC";
 
+        static string OutputRoot(string outputRoot)
+            => string.IsNullOrEmpty(outputRoot) ? PdfUnitySettings.DefaultOutputFolder : outputRoot.Replace("\\", "/").TrimEnd('/');
+
         public static string FolderFor(string outputRoot, ExchangePackage pkg, string target)
+            => $"{OutputRoot(outputRoot)}/{FileName(pkg.SourceName)}/{TargetFolderName(target)}";
+
+        /// <summary>
+        /// Moves the document folder an earlier version named in ASCII only (e.g. "Document" for a Japanese file name)
+        /// to the source file name, so GUIDs and scene references survive. Only a folder generated from the same PDF
+        /// (same source hash) is moved; another document's folder that happens to share the old name is left alone.
+        /// </summary>
+        static void RenameLegacyFolder(string outputRoot, ExchangePackage pkg)
         {
-            var root = string.IsNullOrEmpty(outputRoot) ? PdfUnitySettings.DefaultOutputFolder : outputRoot.Replace("\\", "/").TrimEnd('/');
-            return $"{root}/{SafeName(pkg.SourceName)}/{TargetFolderName(target)}";
+            var root = OutputRoot(outputRoot);
+            var to = $"{root}/{FileName(pkg.SourceName)}";
+            var from = $"{root}/{LegacyFolderName(pkg.SourceName)}";
+            if (from == to || AssetDatabase.IsValidFolder(to) || !AssetDatabase.IsValidFolder(from)) return;
+            bool same = new[] { "PC", "Quest" }.Any(t => File.Exists($"{from}/{t}/{RecordName}") && Record.Load($"{from}/{t}").SourceHash == pkg.SourceHash);
+            if (!same) return;
+            var err = AssetDatabase.MoveAsset(from, to);
+            if (!string.IsNullOrEmpty(err)) { Debug.LogWarning($"[{PdfUnitySettings.ProductName}] {from} を {to} に改名できませんでした: {err}"); return; }
+            // Paths recorded inside the moved records still point at the old folder.
+            foreach (var t in new[] { "PC", "Quest" })
+            {
+                var f = $"{to}/{t}";
+                if (!File.Exists($"{f}/{RecordName}")) continue;
+                var rec = Record.Load(f);
+                foreach (var k in rec.Files.Keys.ToList())
+                {
+                    if (!k.StartsWith(from + "/")) continue;
+                    rec.Files[to + k.Substring(from.Length)] = rec.Files[k];
+                    rec.Files.Remove(k);
+                }
+                rec.Save(f);
+            }
         }
 
         public static GenerateReport Generate(ExchangePackage pkg, string target, GenerateOptions opt)
@@ -70,6 +110,7 @@ namespace PDF2Unity.Editor
                     $"{L.Target(target)} の確認に通らなかったため生成しません（{string.Join("; ", tinfo.BudgetFailures)}）。");
             if (!PdfUnitySettings.IsAssetsFolder(opt.OutputRoot))
                 throw new InvalidOperationException("出力先は Assets フォルダ内を指定してください。");
+            RenameLegacyFolder(opt.OutputRoot, pkg);
             var rep = new GenerateReport { Folder = FolderFor(opt.OutputRoot, pkg, target) };
             var folder = rep.Folder;
             foreach (var sub in new[] { "", "/Textures", "/Materials", "/Meshes", "/Pages" }) EnsureFolder(folder + sub);
@@ -185,8 +226,11 @@ namespace PDF2Unity.Editor
                 }
             }
 
-            // ---- Document.prefab (nested page prefabs, layout from the compiler) -----------
-            var docRoot = new GameObject($"PDF_{SafeName(pkg.SourceName)}");
+            // ---- <source name>.prefab (nested page prefabs, layout from the compiler) -------
+            var docName = FileName(pkg.SourceName);
+            var docPath = $"{folder}/{docName}.prefab";
+            RenameDocumentPrefab(folder, docPath, record);
+            var docRoot = new GameObject(docName);
             try
             {
                 docRoot.transform.localScale = Vector3.one * pkg.WorldScale;
@@ -197,7 +241,6 @@ namespace PDF2Unity.Editor
                     inst.transform.SetParent(docRoot.transform, false);
                     inst.transform.localPosition = page.LayoutPosition;
                 }
-                var docPath = $"{folder}/Document.prefab";
                 produced.Add(docPath);
                 if (record.CanWrite(docPath, opt, rep))
                 {
@@ -235,6 +278,22 @@ namespace PDF2Unity.Editor
             foreach (var s in rep.SkippedUserEdited)
                 rep.Messages.Add($"生成後に編集されたため上書きしませんでした: {s}（調整は Prefab Variant で行うことをおすすめします）");
             return rep;
+        }
+
+        /// <summary>
+        /// Moves a document prefab generated under another name (e.g. Document.prefab before 0.2.1) to
+        /// <paramref name="docPath"/>, so its GUID and the scene instances referencing it survive.
+        /// </summary>
+        static void RenameDocumentPrefab(string folder, string docPath, Record record)
+        {
+            if (File.Exists(docPath)) return;
+            var old = record.Files.Keys.FirstOrDefault(k => k != docPath && k.EndsWith(".prefab")
+                && Path.GetDirectoryName(k).Replace('\\', '/') == folder && File.Exists(k));
+            if (old == null) return;
+            var err = AssetDatabase.MoveAsset(old, docPath);
+            if (!string.IsNullOrEmpty(err)) { Debug.LogWarning($"[{PdfUnitySettings.ProductName}] {old} を {docPath} に改名できませんでした: {err}"); return; }
+            record.Files[docPath] = record.Files[old];
+            record.Files.Remove(old);
         }
 
         // ------------------------------------------------------------------------------------

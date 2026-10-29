@@ -17,7 +17,7 @@ PDF を Unity Editor 上で事前に変換し、VRChat ワールドに静的な�
 1. `Tools > PDF2UnityTransformer > PDF 変換` を開く
 2. PDF を選ぶ（参照ボタン、またはドラッグ＆ドロップ）
 3. 出力（PC / Quest）と **出力先フォルダ**（Assets 内）を選ぶ
-4. **変換して Prefab を作成** を押す → `<出力先>/<文書名>/<PC|Quest>/Document.prefab` が作られます
+4. **変換して Prefab を作成** を押す → `<出力先>/<元のファイル名>/<PC|Quest>/<元のファイル名>.prefab` が作られます
 5. **シーンに配置**（または「作成後にシーンへ配置する」をオン）
 6. Quest 向けにビルドする前に `Tools > PDF2UnityTransformer > 配置済み文書をビルドターゲットに切り替え`
 

@@ -26,7 +26,7 @@ namespace PDF2Unity.Editor
             public GameObject Instance;
             public string DocFolder;   // ".../<Document>"
             public string Target;      // "PC" | "Quest"
-            public string Rest;        // "Document.prefab" | "Pages/Page_0001.prefab"
+            public string Rest;        // "<source name>.prefab" | "Pages/Page_0001.prefab"
             public string AssetPath;
         }
 
@@ -37,11 +37,12 @@ namespace PDF2Unity.Editor
             if (string.IsNullOrEmpty(path)) return false;
             path = path.Replace('\\', '/');
             string targetFolder;
-            if (path.EndsWith("/Document.prefab")) { targetFolder = path.Substring(0, path.Length - "/Document.prefab".Length); rest = "Document.prefab"; }
+            if (!path.EndsWith(".prefab")) return false;
+            var dir = Path.GetDirectoryName(path)?.Replace('\\', '/');
+            if (dir == null) return false;
+            if (!dir.EndsWith("/Pages")) { targetFolder = dir; rest = Path.GetFileName(path); }
             else
             {
-                var dir = Path.GetDirectoryName(path)?.Replace('\\', '/');
-                if (dir == null || !dir.EndsWith("/Pages")) return false;
                 targetFolder = dir.Substring(0, dir.Length - "/Pages".Length);
                 rest = "Pages/" + Path.GetFileName(path);
                 if (!PagePrefab.IsMatch(rest)) return false;
