@@ -42,6 +42,20 @@ namespace PDF2Unity.Editor
             EditorApplication.Exit(code);
         }
 
+        /// <summary>Converts several PDFs through the editor window's batch flow: -p2uPdfs "a.pdf;b.pdf;folder" [-p2uOut Assets/...].</summary>
+        public static void ConvertBatch()
+        {
+            int code = 0;
+            try
+            {
+                var inputs = (Arg("-p2uPdfs") ?? throw new ArgumentException("-p2uPdfs required")).Split(';');
+                foreach (var line in PdfCompilerWindow.ConvertBatchForTest(inputs, Arg("-p2uOut", PdfUnitySettings.DefaultOutputFolder)))
+                    Debug.Log($"[{PdfUnitySettings.ProductName}] batch: {line}");
+            }
+            catch (Exception e) { Debug.LogException(e); code = 1; }
+            EditorApplication.Exit(code);
+        }
+
         /// <summary>Prints the download size a generated prefab adds to a world: -p2uPrefab Assets/.../&lt;source name&gt;.prefab [-p2uTarget pc|quest].</summary>
         public static void MeasureWorldSize()
         {
