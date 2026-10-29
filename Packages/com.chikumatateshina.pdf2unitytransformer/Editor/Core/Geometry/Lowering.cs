@@ -15,6 +15,7 @@ namespace PDF2Unity.Core.Geometry
         public double CompositeDpi = 300;
         public double ImageDpi = 300;
         public double LightImageDpi = 200; // image density cap in the light image mode
+        public double SmallImageDpi = 130; // ... and in the small (download size first) mode
         public int MaxTextureSize = 4096;
         public bool EnforceBudgets;
         public double BytesPerPixel = 1.0, MipFactor = 1.333;
@@ -22,10 +23,10 @@ namespace PDF2Unity.Core.Geometry
         public double MaxTextureMemoryMB = double.MaxValue, MaxOverdraw = double.MaxValue;
 
         public static Profile PcStandard() => new Profile();
-        public static Profile PcHigh() => new Profile { Name = "pc-high", CurveTolerancePt = 0.02, MinStrokeWidthPt = 0.2, CompositeDpi = 450, ImageDpi = 450, LightImageDpi = 300, MaxTextureSize = 8192 };
+        public static Profile PcHigh() => new Profile { Name = "pc-high", CurveTolerancePt = 0.02, MinStrokeWidthPt = 0.2, CompositeDpi = 450, ImageDpi = 450, LightImageDpi = 300, SmallImageDpi = 200, MaxTextureSize = 8192 };
         public static Profile QuestStandard() => new Profile
         {
-            Name = "quest-standard", Target = "quest", CurveTolerancePt = 0.15, MinStrokeWidthPt = 0.35, CompositeDpi = 200, ImageDpi = 200, LightImageDpi = 150,
+            Name = "quest-standard", Target = "quest", CurveTolerancePt = 0.15, MinStrokeWidthPt = 0.35, CompositeDpi = 200, ImageDpi = 200, LightImageDpi = 150, SmallImageDpi = 130,
             MaxTextureSize = 2048, EnforceBudgets = true, BytesPerPixel = 0.445, MaxTrianglesPerPage = 120000, MaxTrianglesTotal = 600000,
             MaxBatchesPerPage = 32, MaxTextureMemoryMB = 96, MaxOverdraw = 6,
         };
@@ -175,7 +176,7 @@ namespace PDF2Unity.Core.Geometry
         readonly Rect displayRect;
         public readonly Job Job;
 
-        public PageLowering(PageModel p, Profile prof, string mode, Diagnostics d, GlyphCache g, bool precomposeTranslucent, Job job)
+        public PageLowering(PageModel p, Profile prof, string mode, Diagnostics d, GlyphCache g, bool precomposeTranslucent, Job job, double curveDetail = 1)
         {
             page = p;
             profile = prof;
@@ -185,7 +186,7 @@ namespace PDF2Unity.Core.Geometry
             this.precomposeTranslucent = precomposeTranslucent;
             Job = job;
             pno = p.Index + 1;
-            tol = prof.CurveTolerancePt / Math.Max(p.UserUnit, 1e-6);
+            tol = prof.CurveTolerancePt * Math.Max(curveDetail, 0.05) / Math.Max(p.UserUnit, 1e-6);
             minW = prof.MinStrokeWidthPt / Math.Max(p.UserUnit, 1e-6);
             clips = new ClipResolver(p, tol);
             displayRect = new Rect(0, 0, p.DisplayW, p.DisplayH);

@@ -23,7 +23,8 @@ namespace PDF2Unity.Core
         public string SubstituteFontDir;
         public bool FontRightsDeclared;
         public bool PrecomposeTranslucent;
-        public string ImageQuality = "light"; // light (visually lossless reduction, JPEG, atlases) | faithful
+        public string ImageQuality = "light"; // light (visually lossless reduction, JPEG, atlases) | small (download size first) | faithful
+        public double CurveDetail = 1;        // curve tolerance multiplier: < 1 finer, > 1 fewer triangles
         public double ReferenceDpi = 110;
         public bool WriteReference = true;
         public double WorldScale = 1;
@@ -50,18 +51,19 @@ namespace PDF2Unity.Core
         public const string Version = "0.2.0";
         public const string PackageFormat = "pdf2unity-package";
 
-        public static CompileResult Compile(CompileOptions o, Job job)
+        /// <summary>Reads the PDF and interprets the selected pages (shared by <see cref="Compile"/> and the preview).</summary>
+        internal static List<PageModel> Frontend(CompileOptions o, Job job, Diagnostics diag, out PdfFile file, out FrontendContext ctx, out string sourceHash,
+            Action beforeParse = null)
         {
-            var diag = new Diagnostics();
             var limits = o.Limits;
             job.Report("frontend", 0);
             var info = new FileInfo(o.Input);
             if (!info.Exists) throw new CompileException("input.missing", "PDF file not found");
             if (info.Length > limits.MaxInputBytes) throw new CompileException("input.too-large", $"input is {info.Length} bytes");
             var bytes = File.ReadAllBytes(o.Input);
-            var sourceHash = Sha(bytes);
-            PrepareOutput(o.Output);
-            var file = new PdfFile(bytes, limits);
+            sourceHash = Sha(bytes);
+            beforeParse?.Invoke();
+            file = new PdfFile(bytes, limits);
             if (file.Reconstructed) diag.Warn("input.repaired", "cross-reference table was damaged and has been reconstructed");
             var allPages = file.Pages();
             if (allPages.Count == 0) throw new CompileException("input.corrupt", "document has no pages");
@@ -69,7 +71,7 @@ namespace PDF2Unity.Core
             var indices = ParsePages(o.Pages, allPages.Count);
 
             var cmyk = CmykTable.Get(o.CacheDir);
-            var ctx = new FrontendContext
+            ctx = new FrontendContext
             {
                 File = file, Diag = diag, Limits = limits, Job = job,
                 ColorSpaces = new ColorSpaceFactory(cmyk, diag, limits),
@@ -78,7 +80,6 @@ namespace PDF2Unity.Core
             };
             if (file.Root.Has("AcroForm")) diag.Info("scope.forms", "interactive form fields are out of scope");
 
-            // ---- frontend ----
             var pages = new List<PageModel>();
             for (int k = 0; k < indices.Count; k++)
             {
@@ -87,6 +88,13 @@ namespace PDF2Unity.Core
                 new Interpreter(ctx, pm).Run();
                 pages.Add(pm);
             }
+            return pages;
+        }
+
+        public static CompileResult Compile(CompileOptions o, Job job)
+        {
+            var diag = new Diagnostics();
+            var pages = Frontend(o, job, diag, out var file, out var ctx, out var sourceHash, () => PrepareOutput(o.Output));
 
             // ---- lowering per target ----
             var glyphCache = new GlyphCache();
@@ -98,7 +106,7 @@ namespace PDF2Unity.Core
                 foreach (var pm in pages)
                 {
                     job.Report($"lower:{prof.Target}", (float)step++ / Math.Max(1, totalSteps), $"page {pm.Index + 1}");
-                    var low = new PageLowering(pm, prof, o.Mode, diag, glyphCache, o.PrecomposeTranslucent, job);
+                    var low = new PageLowering(pm, prof, o.Mode, diag, glyphCache, o.PrecomposeTranslucent, job, o.CurveDetail);
                     low.Run();
                     list.Add((pm, low, low.Composites()));
                 }
@@ -181,7 +189,7 @@ namespace PDF2Unity.Core
                         double sxp = r.Rect.Width / pw, syp = r.Rect.Height / ph;
                         r.Rect = new Rect(r.Rect.X0 + cx0 * sxp, r.Rect.Y0 + cy0 * syp, r.Rect.X0 + cx1 * sxp, r.Rect.Y0 + cy1 * syp);
                         r.Partial = true;
-                        composites[(target, r)] = (Crop(delta, cx0, cy0, cx1, cy1), dpi);
+                        composites[(target, r)] = (ImageOps.Crop(delta, cx0, cy0, cx1, cy1), dpi);
                     }
                     if (o.WriteReference)
                     {
@@ -275,6 +283,7 @@ namespace PDF2Unity.Core
                     ["fontRights"] = o.FontRightsDeclared ? "declared" : "verify",
                     ["translucency"] = o.PrecomposeTranslucent ? "precompose" : "native",
                     ["imageQuality"] = o.ImageQuality,
+                    ["curveDetail"] = o.CurveDetail,
                 },
                 ["pageToUnity"] = "72 PDF points * UserUnit = 1 Unity unit; page centred at origin, front faces -Z",
                 ["pages"] = pagesJson,
@@ -500,7 +509,8 @@ namespace PDF2Unity.Core
             HashSet<CompositeRegion> emptyComposites)
         {
             string t = prof.Target;
-            bool light = o.ImageQuality != "faithful";
+            bool light = o.ImageQuality != "faithful", small = o.ImageQuality == "small";
+            double capDpi = small ? prof.SmallImageDpi : prof.LightImageDpi;
             string tdir = Path.Combine(o.Output, "targets", t);
             foreach (var sub in new[] { "pages", "textures", "composites" }) Directory.CreateDirectory(Path.Combine(tdir, sub));
             // ---- textures: images (resampled for this target) and composites ----
@@ -519,9 +529,9 @@ namespace PDF2Unity.Core
                 w = Math.Max(1, (int)(w * s)); h = Math.Max(1, (int)(h * s));
                 long full = (long)Math.Min(w, src.Width) * Math.Min(h, src.Height);
                 pixelsBefore += full;
-                if (light && prof.LightImageDpi < prof.ImageDpi)
+                if (light && capDpi < prof.ImageDpi)
                 {
-                    double ls = Math.Min(1, Math.Max(kv.Value, 1e-6) * prof.LightImageDpi / prof.ImageDpi) / Math.Max(ratio, 1e-6);
+                    double ls = Math.Min(1, Math.Max(kv.Value, 1e-6) * capDpi / prof.ImageDpi) / Math.Max(ratio, 1e-6);
                     w = Math.Max(1, (int)Math.Ceiling(w * Math.Min(1, ls))); h = Math.Max(1, (int)Math.Ceiling(h * Math.Min(1, ls)));
                 }
                 var res = (w >= src.Width && h >= src.Height) ? src : ImageOps.Resample(src, Math.Min(w, src.Width), Math.Min(h, src.Height));
@@ -532,17 +542,25 @@ namespace PDF2Unity.Core
                 sources.Add(new TexSource { Key = "i:" + kv.Key, Name = "i-" + Sha(Encoding.UTF8.GetBytes(kv.Key)).Substring(0, 24), Image = res });
             }
             var compKeys = new Dictionary<CompositeRegion, string>();
+            var compAlpha = new Dictionary<CompositeRegion, bool>();
             foreach (var (pm, _, allComps) in pages)
             {
                 int ri = 0;
                 foreach (var r in allComps)
                 {
                     if (emptyComposites.Contains(r)) continue;
-                    var (img, _) = composites[(t, r)];
-                    if (light && !r.Partial) img = ImageOps.VisualReduce(img);
+                    var (img, dpi) = composites[(t, r)];
+                    if (small && dpi > capDpi * 1.05)
+                        img = ImageOps.Resample(img, Math.Max(4, (int)Math.Ceiling(img.Width * capDpi / dpi)), Math.Max(4, (int)Math.Ceiling(img.Height * capDpi / dpi)));
+                    // Light mode: a delta composite whose effect changed (almost) every pixel becomes opaque. The few
+                    // unchanged pixels already hold the rendered page there, so filling them changes nothing visible.
+                    bool alpha = r.Partial && (!light || TransparentFraction(img) > 0.005);
+                    if (r.Partial && !alpha) img = Opaque(img);
+                    if (light && !alpha) img = ImageOps.VisualReduce(img);
                     var key = $"c:{pm.Index + 1}:{ri}";
                     compKeys[r] = key;
-                    sources.Add(new TexSource { Key = key, Name = $"page-{pm.Index + 1:D4}-r{ri:D2}", Image = ImageOps.Multiple4(img), Composite = true, Partial = r.Partial });
+                    compAlpha[r] = alpha;
+                    sources.Add(new TexSource { Key = key, Name = $"page-{pm.Index + 1:D4}-r{ri:D2}", Image = ImageOps.Multiple4(img), Composite = true, Partial = alpha });
                     ri++;
                 }
             }
@@ -588,7 +606,7 @@ namespace PDF2Unity.Core
                     for (int c = 0; c < 16; c++) colors[c] = 255;
                     items.Add(new DrawItem
                     {
-                        Textured = true, Texture = compKeys[r], Composite = true, CompositeAlpha = r.Partial, Mesh = mesh, Colors = colors,
+                        Textured = true, Texture = compKeys[r], Composite = true, CompositeAlpha = compAlpha[r], Mesh = mesh, Colors = colors,
                         Uv = new double[] { 0, 1, 1, 1, 1, 0, 0, 0 }, Order = r.Order, DisplayBox = r.Rect,
                     });
                     var reasons = new List<object>();
@@ -713,6 +731,7 @@ namespace PDF2Unity.Core
                             entry["texture"] = batch.Slot.File;
                             entry["alpha"] = !composite || list[0].CompositeAlpha;
                             if (batch.Slot.Atlas) entry["atlas"] = true;
+                            if (batch.Slot.Dxt1) entry["opaque"] = true;
                         }
                         batchJson.Add(entry);
                     }
@@ -758,7 +777,7 @@ namespace PDF2Unity.Core
             return new Dictionary<string, object>
             {
                 ["profile"] = prof.Name, ["textureCompression"] = prof.Target == "quest" ? "astc6x6" : "high",
-                ["imageQuality"] = light ? "light" : "faithful",
+                ["imageQuality"] = small ? "small" : light ? "light" : "faithful",
                 ["maxTextureSize"] = prof.MaxTextureSize, ["pages"] = pageFiles, ["triangles"] = totalTris,
                 ["textures"] = texFileCount, ["atlases"] = atlasCount, ["textureMemoryMB"] = Math.Round(mb, 2), ["budgetFailures"] = failures,
             };
@@ -771,10 +790,24 @@ namespace PDF2Unity.Core
             public bool Composite, Partial;
         }
 
+        /// <summary>
+        /// PC: whether DXT1 (half the memory of BC7) is visually lossless for an opaque image: graphics with sharp
+        /// multi-colour edges are not, smooth or two-colour content (starfields, gradients, text on plain colour) is.
+        /// </summary>
+        static bool Dxt1Invisible(Profile prof, RgbaImage img)
+        {
+            if (prof.Target == "quest" || ImageOps.HasAlpha(img)) return false;
+            var (mean, p999) = ImageOps.Dxt1Error(img);
+            return mean <= Dxt1MaxMean && p999 <= Dxt1MaxP999;
+        }
+
+        const double Dxt1MaxMean = 2.0;
+        const int Dxt1MaxP999 = 24;
+
         sealed class TexSlot
         {
             public string File;
-            public bool Atlas;
+            public bool Atlas, Dxt1;             // Dxt1: opaque PNG that may use DXT1 on PC
             public int Width, Height;            // pixels of this image (inside the atlas when Atlas)
             public double U0 = 0, V0 = 0, U1 = 1, V1 = 1; // image UV (0..1) -> texture UV
             public double WhiteU, WhiteV;        // atlas only: UV of the white block (vector items)
@@ -789,10 +822,18 @@ namespace PDF2Unity.Core
 
         const int AtlasPad = 8, AtlasWhite = 32, JpegQuality = 92, MaxBridgeVertices = 65536;
 
+        // PC: opaque textures use DXT1 (0.5 B/px) in light mode; everything else BC7/DXT5 (1 B/px). Quest: ASTC 6x6.
+        static double TexBytesPerPixel(Profile prof, bool light, bool opaque) => prof.Target == "quest" ? prof.BytesPerPixel : light && opaque ? 0.5 : prof.BytesPerPixel;
+
+        enum TexClass { Jpeg, OpaquePng, AlphaPng }
+
         /// <summary>
-        /// Writes the target's textures. Faithful: one PNG per image/composite. Light: photographic opaque images become
-        /// JPEG (4:4:4, q92) when that is much smaller than PNG; images and composites up to half the maximum texture size
-        /// are packed into atlases (one per format), each with a white block for vector items.
+        /// Writes the target's textures. Unity only block-compresses textures whose sides are powers of two (with
+        /// mipmaps and no NPOT scaling), so:
+        /// Faithful: one PNG per image/composite, scaled up to a power of two by the importer.
+        /// Light: everything is packed into power-of-two atlases with a white block for vector items, one set per format:
+        /// photographic opaque content as JPEG (4:4:4, q92; DXT1 on PC), other opaque content for which DXT1 is
+        /// invisible as PNG (DXT1), the rest as PNG with alpha (BC7).
         /// </summary>
         static Dictionary<string, TexSlot> WriteTextures(CompileOptions o, Profile prof, bool light, List<TexSource> sources,
             out double texBytes, out int fileCount, out int atlasCount)
@@ -801,27 +842,21 @@ namespace PDF2Unity.Core
             var slots = new Dictionary<string, TexSlot>();
             double bytes = 0;
             int files = 0;
-            void Emit(string rel, RgbaImage img, bool jpeg, bool composite, byte[] encoded)
+            void Emit(string rel, int w, int h, bool opaque, byte[] encoded)
             {
                 File.WriteAllBytes(Path.Combine(o.Output, rel), encoded);
-                // PC: opaque images use DXT1 (0.5 B/px) in light mode; everything else BC7/DXT5 (1 B/px). Quest: ASTC 6x6.
-                double bpp = t == "quest" ? prof.BytesPerPixel : light && jpeg && !composite ? 0.5 : prof.BytesPerPixel;
-                bytes += (double)img.Width * img.Height * bpp * prof.MipFactor;
+                bytes += (double)ImageOps.Pot(w) * ImageOps.Pot(h) * TexBytesPerPixel(prof, light, opaque) * prof.MipFactor;
                 files++;
             }
-            byte[] EncodePng(TexSource s) => s.Composite && !s.Partial
-                ? Png.Encode(ToRgb(s.Image), s.Image.Width, s.Image.Height, 3)
-                : Png.Encode(s.Image.Pixels, s.Image.Width, s.Image.Height, 4);
+            byte[] EncodePng(RgbaImage img, bool rgb) => rgb ? Png.Encode(ToRgb(img), img.Width, img.Height, 3) : Png.Encode(img.Pixels, img.Width, img.Height, 4);
             // JPEG only pays off (and only stays invisible) for photographic content: graphics compress well as PNG.
-            bool Photo(TexSource s, out byte[] png, out byte[] jpg)
+            TexClass Classify(RgbaImage img)
             {
-                png = EncodePng(s);
-                jpg = null;
-                if (!light || s.Composite || ImageOps.HasAlpha(s.Image)) return false;
-                jpg = Jpeg.Encode(s.Image.Pixels, s.Image.Width, s.Image.Height, JpegQuality);
-                return jpg.Length * 2 < png.Length;
+                if (ImageOps.HasAlpha(img)) return TexClass.AlphaPng;
+                var jpg = Jpeg.Encode(img.Pixels, img.Width, img.Height, JpegQuality);
+                if (jpg.Length * 2 < EncodePng(img, true).Length) return TexClass.Jpeg;
+                return Dxt1Invisible(prof, img) ? TexClass.OpaquePng : TexClass.AlphaPng;
             }
-            var groups = new Dictionary<bool, List<TexSource>> { [true] = new List<TexSource>(), [false] = new List<TexSource>() };
             // Identical pixels (the same picture embedded several times) share one texture.
             var byPixels = new Dictionary<string, TexSource>();
             var aliases = new List<(string key, TexSource of)>();
@@ -833,63 +868,77 @@ namespace PDF2Unity.Core
                 byPixels[h] = s;
                 unique.Add(s);
             }
-            foreach (var s in unique)
-            {
-                string dir = s.Composite ? "composites" : "textures";
-                bool atlas = light && Math.Max(s.Image.Width, s.Image.Height) <= prof.MaxTextureSize / 2;
-                if (atlas)
-                {
-                    bool photo = !s.Composite && !ImageOps.HasAlpha(s.Image) && Photo(s, out _, out _);
-                    groups[photo].Add(s);
-                    continue;
-                }
-                bool isPhoto = Photo(s, out var png, out var jpg);
-                var rel = $"targets/{t}/{dir}/{s.Name}.{(isPhoto ? "jpg" : "png")}";
-                Emit(rel, s.Image, isPhoto, s.Composite, isPhoto ? jpg : png);
-                slots[s.Key] = new TexSlot { File = rel, Width = s.Image.Width, Height = s.Image.Height };
-            }
             int atlases = 0;
-            foreach (var g in groups)
+            if (!light)
             {
-                var list = g.Value;
-                if (list.Count == 0) continue;
-                var sizes = new List<(int w, int h)>();
-                foreach (var s in list) sizes.Add((s.Image.Width, s.Image.Height));
-                var dims = ImageOps.Pack(sizes, prof.MaxTextureSize, AtlasPad, AtlasWhite, out var placed);
-                for (int a = 0; a < dims.Count; a++)
+                foreach (var s in unique)
                 {
-                    var (aw, ah) = dims[a];
-                    var atlasImg = new RgbaImage(aw, ah);
-                    for (int y = 0; y < AtlasWhite; y++)
-                        for (int x = 0; x < AtlasWhite; x++)
-                        {
-                            int i = (y * aw + x) * 4;
-                            atlasImg.Pixels[i] = atlasImg.Pixels[i + 1] = atlasImg.Pixels[i + 2] = atlasImg.Pixels[i + 3] = 255;
-                        }
-                    var ids = new StringBuilder(g.Key ? "jpg" : "png");
-                    for (int k = 0; k < list.Count; k++)
+                    var rel = $"targets/{t}/{(s.Composite ? "composites" : "textures")}/{s.Name}.png";
+                    Emit(rel, s.Image.Width, s.Image.Height, false, EncodePng(s.Image, s.Composite && !s.Partial));
+                    slots[s.Key] = new TexSlot { File = rel, Width = s.Image.Width, Height = s.Image.Height };
+                }
+            }
+            else
+            {
+                var groups = new Dictionary<TexClass, List<RgbaImage>>();
+                var members = new Dictionary<TexClass, List<TexSource>>();
+                foreach (var s in unique)
+                {
+                    var img = s.Image;
+                    // Every image must fit an atlas with its padding, beside the white block.
+                    int room = prof.MaxTextureSize - 2 * AtlasPad, beside = room - (AtlasWhite + AtlasPad + 7) / 8 * 8;
+                    double k = Math.Min(1, Math.Min((double)room / img.Width, (double)room / img.Height));
+                    if (img.Width * k > beside && img.Height * k > beside) k = Math.Min(k, (double)beside / Math.Min(img.Width, img.Height));
+                    if (k < 1)
                     {
-                        if (placed[k].Atlas != a) continue;
-                        ImageOps.Blit(list[k].Image, atlasImg, placed[k].X, placed[k].Y, AtlasPad);
-                        ids.Append('|').Append(list[k].Key);
+                        img = ImageOps.Multiple4(ImageOps.Resample(img, Math.Max(4, (int)(img.Width * k)), Math.Max(4, (int)(img.Height * k))));
                     }
-                    var rel = $"targets/{t}/textures/atlas-{Sha(Encoding.UTF8.GetBytes(ids.ToString())).Substring(0, 16)}.{(g.Key ? "jpg" : "png")}";
-                    var enc = g.Key ? Jpeg.Encode(atlasImg.Pixels, aw, ah, JpegQuality) : Png.Encode(atlasImg.Pixels, aw, ah, 4);
-                    Emit(rel, atlasImg, g.Key, false, enc);
-                    atlases++;
-                    for (int k = 0; k < list.Count; k++)
+                    var c = Classify(img);
+                    if (!groups.ContainsKey(c)) { groups[c] = new List<RgbaImage>(); members[c] = new List<TexSource>(); }
+                    groups[c].Add(img);
+                    members[c].Add(s);
+                }
+                foreach (var g in groups)
+                {
+                    var list = g.Value;
+                    var sizes = new List<(int w, int h)>();
+                    foreach (var img in list) sizes.Add((img.Width, img.Height));
+                    var dims = ImageOps.Pack(sizes, prof.MaxTextureSize, AtlasPad, AtlasWhite, out var placed);
+                    for (int a = 0; a < dims.Count; a++)
                     {
-                        if (placed[k].Atlas != a) continue;
-                        var p = placed[k];
-                        int w = list[k].Image.Width, h = list[k].Image.Height;
-                        // Image row 0 (top, image-space v = 1) sits at atlas row p.Y; Unity's v runs bottom-up.
-                        slots[list[k].Key] = new TexSlot
+                        var (aw, ah) = dims[a];
+                        var atlasImg = new RgbaImage(aw, ah);
+                        for (int y = 0; y < AtlasWhite; y++)
+                            for (int x = 0; x < AtlasWhite; x++)
+                            {
+                                int i = (y * aw + x) * 4;
+                                atlasImg.Pixels[i] = atlasImg.Pixels[i + 1] = atlasImg.Pixels[i + 2] = atlasImg.Pixels[i + 3] = 255;
+                            }
+                        var ids = new StringBuilder(g.Key.ToString());
+                        for (int k = 0; k < list.Count; k++)
                         {
-                            File = rel, Atlas = true, Width = w, Height = h,
-                            U0 = (double)p.X / aw, U1 = (double)(p.X + w) / aw,
-                            V0 = 1 - (double)(p.Y + h) / ah, V1 = 1 - (double)p.Y / ah,
-                            WhiteU = AtlasWhite / 2.0 / aw, WhiteV = 1 - AtlasWhite / 2.0 / ah,
-                        };
+                            if (placed[k].Atlas != a) continue;
+                            ImageOps.Blit(list[k], atlasImg, placed[k].X, placed[k].Y, AtlasPad);
+                            ids.Append('|').Append(members[g.Key][k].Key);
+                        }
+                        bool jpeg = g.Key == TexClass.Jpeg, opaque = g.Key != TexClass.AlphaPng;
+                        var rel = $"targets/{t}/textures/atlas-{Sha(Encoding.UTF8.GetBytes(ids.ToString())).Substring(0, 16)}.{(jpeg ? "jpg" : "png")}";
+                        Emit(rel, aw, ah, opaque, jpeg ? Jpeg.Encode(atlasImg.Pixels, aw, ah, JpegQuality) : EncodePng(atlasImg, opaque));
+                        atlases++;
+                        for (int k = 0; k < list.Count; k++)
+                        {
+                            if (placed[k].Atlas != a) continue;
+                            var p = placed[k];
+                            int w = list[k].Width, h = list[k].Height;
+                            // Image row 0 (top, image-space v = 1) sits at atlas row p.Y; Unity's v runs bottom-up.
+                            slots[members[g.Key][k].Key] = new TexSlot
+                            {
+                                File = rel, Atlas = true, Dxt1 = g.Key == TexClass.OpaquePng, Width = w, Height = h,
+                                U0 = (double)p.X / aw, U1 = (double)(p.X + w) / aw,
+                                V0 = 1 - (double)(p.Y + h) / ah, V1 = 1 - (double)p.Y / ah,
+                                WhiteU = AtlasWhite / 2.0 / aw, WhiteV = 1 - AtlasWhite / 2.0 / ah,
+                            };
+                        }
                     }
                 }
             }
@@ -900,7 +949,10 @@ namespace PDF2Unity.Core
             return slots;
         }
 
-        /// <summary>Pixels of <paramref name="after"/> that differ from <paramref name="before"/> (dilated by 1px); null if none.</summary>
+        /// <summary>
+        /// <paramref name="after"/> with alpha 255 where it differs from <paramref name="before"/> (dilated by 1px) and 0
+        /// elsewhere (colour kept, so filtering at the edges blends the right colour); null if nothing changed.
+        /// </summary>
         static RgbaImage Delta(RgbaImage after, RgbaImage before, out int x0, out int y0, out int x1, out int y1)
         {
             int w = after.Width, h = after.Height;
@@ -926,10 +978,11 @@ namespace PDF2Unity.Core
                 for (int x = 0; x < w; x++)
                 {
                     int k = y * w + x;
+                    int i = k * 4;
+                    o.Pixels[i] = after.Pixels[i]; o.Pixels[i + 1] = after.Pixels[i + 1]; o.Pixels[i + 2] = after.Pixels[i + 2];
                     if (!(rowDil[k] || (y > 0 && rowDil[k - w]) || (y + 1 < h && rowDil[k + w]))) continue;
                     any = true;
-                    int i = k * 4;
-                    o.Pixels[i] = after.Pixels[i]; o.Pixels[i + 1] = after.Pixels[i + 1]; o.Pixels[i + 2] = after.Pixels[i + 2]; o.Pixels[i + 3] = 255;
+                    o.Pixels[i + 3] = 255;
                     if (x < x0) x0 = x;
                     if (y < y0) y0 = y;
                     if (x + 1 > x1) x1 = x + 1;
@@ -938,11 +991,18 @@ namespace PDF2Unity.Core
             return any ? o : null;
         }
 
-        static RgbaImage Crop(RgbaImage src, int x0, int y0, int x1, int y1)
+        static double TransparentFraction(RgbaImage img)
         {
-            int w = x1 - x0, h = y1 - y0;
-            var o = new RgbaImage(w, h);
-            for (int y = 0; y < h; y++) Buffer.BlockCopy(src.Pixels, ((y0 + y) * src.Width + x0) * 4, o.Pixels, y * w * 4, w * 4);
+            long n = 0;
+            for (int i = 3; i < img.Pixels.Length; i += 4) if (img.Pixels[i] != 255) n++;
+            return (double)n / Math.Max(1, img.Width * img.Height);
+        }
+
+        static RgbaImage Opaque(RgbaImage img)
+        {
+            var o = new RgbaImage(img.Width, img.Height);
+            Buffer.BlockCopy(img.Pixels, 0, o.Pixels, 0, img.Pixels.Length);
+            for (int i = 3; i < o.Pixels.Length; i += 4) o.Pixels[i] = 255;
             return o;
         }
 

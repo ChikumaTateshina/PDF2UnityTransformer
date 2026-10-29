@@ -28,11 +28,12 @@ namespace PDF2Unity.Editor
             "直接再現できない描画が 1 つでもあれば変換を中止します。",
             "画像化が必要なページはページ全体を画像にします（ベクター表示は失われます）。",
         };
-        static readonly string[] ImageQualities = { "light", "faithful" };
-        static readonly GUIContent[] ImageQualityNames = { new GUIContent("軽量（既定）"), new GUIContent("忠実") };
+        static readonly string[] ImageQualities = { "light", "small", "faithful" };
+        static readonly GUIContent[] ImageQualityNames = { new GUIContent("軽量（既定）"), new GUIContent("最小（容量優先）"), new GUIContent("忠実") };
         static readonly string[] ImageQualityHelp =
         {
             "見た目が変わらない範囲で画像を縮小し、写真は JPEG に、小さな画像はアトラス（1 枚のテクスチャ）にまとめます。容量と描画負荷が下がります。",
+            "ワールドのダウンロード容量を優先します。画像の密度を下げ（130dpi 相当）、Crunch 圧縮をかけます。近くで見ると写真がやや粗く見えることがあります。",
             "画像を元の解像度（上限まで）のまま PNG で出力します。",
         };
         static readonly string[] PcProfiles = { "pc-standard", "pc-high" };
@@ -45,6 +46,7 @@ namespace PDF2Unity.Editor
         [SerializeField] bool targetQuest;
         [SerializeField] int pcProfile;
         [SerializeField] int imageQuality;
+        [SerializeField] int curveDetail = CurvePreviewWindow.DefaultDetail;
         [SerializeField] string outputFolder = PdfUnitySettings.DefaultOutputFolder;
         [SerializeField] string substituteFonts = "";
         [SerializeField] bool fontRightsDeclared;
@@ -63,6 +65,7 @@ namespace PDF2Unity.Editor
         string lastError;
         readonly List<string> generatedMessages = new List<string>();
         readonly Dictionary<string, string> generatedPrefabs = new Dictionary<string, string>();
+        readonly Dictionary<string, string> measuredSizes = new Dictionary<string, string>();
 
         [MenuItem(PdfUnitySettings.MenuRoot + "PDF 変換")]
         public static void Open() => GetWindow<PdfCompilerWindow>(PdfUnitySettings.ProductName);
@@ -101,6 +104,19 @@ namespace PDF2Unity.Editor
             targetQuest = EditorGUILayout.ToggleLeft("Quest（Android）", targetQuest);
             imageQuality = EditorGUILayout.Popup(new GUIContent("画像"), imageQuality, ImageQualityNames);
             EditorGUILayout.HelpBox(ImageQualityHelp[imageQuality], MessageType.None);
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                curveDetail = EditorGUILayout.Popup(
+                    new GUIContent("曲線の細かさ", "文字や図形の曲線を何個の三角形で近似するか。粗くすると三角面数（描画負荷）が減ります。"),
+                    curveDetail, CurvePreviewWindow.DetailNames);
+                using (new EditorGUI.DisabledScope(PreviewBlocker() != null))
+                    if (GUILayout.Button(new GUIContent("プレビュー…", "変換前に、選んだ細かさでの見た目と三角面数を確認します"), GUILayout.Width(90)))
+                    {
+                        var targets = Targets();
+                        CurvePreviewWindow.Open(Options(Path.GetFullPath(PathUtil.Clean(pdfPath)), null, targets), targets, curveDetail, d => { curveDetail = d; Repaint(); });
+                        GUIUtility.ExitGUI();
+                    }
+            }
             OutputFolderField();
             worldScale = EditorGUILayout.FloatField(
                 new GUIContent("Prefab の大きさ", "1 のとき 72pt = 1 ユニット。0.0254 で実寸（メートル）になります。"), worldScale);
@@ -158,11 +174,18 @@ namespace PDF2Unity.Editor
             EditorGUILayout.LabelField(title, EditorStyles.boldLabel);
         }
 
-        string Blocker()
+        string PreviewBlocker()
         {
             if (string.IsNullOrWhiteSpace(pdfPath)) return "PDF ファイルを選んでください。";
             if (!File.Exists(PathUtil.Clean(pdfPath))) return "PDF ファイルが見つかりません。";
             if (!(targetPc || targetQuest)) return "出力先（PC / Quest）を 1 つ以上選んでください。";
+            return null;
+        }
+
+        string Blocker()
+        {
+            var r = PreviewBlocker();
+            if (r != null) return r;
             if (!PdfUnitySettings.IsAssetsFolder(outputFolder)) return "出力先フォルダは Assets フォルダ内を指定してください。";
             if (Application.platform != RuntimePlatform.WindowsEditor) return "現在は Windows 版 Unity Editor のみ対応しています。";
             return null;
@@ -262,13 +285,24 @@ namespace PDF2Unity.Editor
             var name = AssetGenerator.SafeName(Path.GetFileNameWithoutExtension(input));
             packageDir = Path.GetFullPath(Path.Combine(PdfUnitySettings.CacheRoot, name));
             Directory.CreateDirectory(Path.GetDirectoryName(packageDir));
+            try { running = new ConversionRunner(Options(input, packageDir, Targets())); }
+            catch (Exception e) { lastError = $"変換を開始できませんでした: {e.Message}"; running = null; }
+        }
+
+        List<Profile> Targets()
+        {
             var targets = new List<Profile>();
             if (targetPc) targets.Add(Profile.ByName(PcProfiles[pcProfile]));
             if (targetQuest) targets.Add(Profile.QuestStandard());
-            var opts = new CompileOptions
+            return targets;
+        }
+
+        CompileOptions Options(string input, string output, List<Profile> targets)
+        {
+            return new CompileOptions
             {
                 Input = input,
-                Output = packageDir,
+                Output = output,
                 Pages = pages,
                 Mode = Modes[modeIndex],
                 Targets = targets,
@@ -276,14 +310,13 @@ namespace PDF2Unity.Editor
                 FontRightsDeclared = fontRightsDeclared,
                 PrecomposeTranslucent = precomposeTranslucent,
                 ImageQuality = ImageQualities[imageQuality],
+                CurveDetail = CurvePreviewWindow.Details[Mathf.Clamp(curveDetail, 0, CurvePreviewWindow.Details.Length - 1)],
                 WorldScale = worldScale,
                 CacheDir = Path.GetFullPath(PdfUnitySettings.ToolCache),
                 WriteReference = false, // reference renders are only used by the regression tools
                 ReferenceDpi = 72,
                 Limits = new Limits { TimeoutSec = PdfUnitySettings.TimeoutSec },
             };
-            try { running = new ConversionRunner(opts); }
-            catch (Exception e) { lastError = $"変換を開始できませんでした: {e.Message}"; running = null; }
         }
 
         void OnFinished()
@@ -326,6 +359,7 @@ namespace PDF2Unity.Editor
         void GenerateAll()
         {
             generatedMessages.Clear();
+            measuredSizes.Clear();
             generatedPrefabs.Clear();
             foreach (var t in loaded.Targets.Values)
             {
@@ -361,6 +395,20 @@ namespace PDF2Unity.Editor
             }
         }
 
+        void MeasureSize(string target, string prefabPath)
+        {
+            try
+            {
+                long bytes = WorldSize.Measure(prefabPath, target);
+                measuredSizes[target] = $"ダウンロード容量（この Prefab の分）: {bytes / 1048576.0:0.00} MB";
+            }
+            catch (Exception e)
+            {
+                measuredSizes[target] = $"容量を測れませんでした: {e.Message}";
+                Debug.LogException(e);
+            }
+        }
+
         static void Place(GameObject prefab)
         {
             var inst = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
@@ -375,11 +423,17 @@ namespace PDF2Unity.Editor
             {
                 var type = t.Status == "pass" ? MessageType.Info : t.Status == "fail" ? MessageType.Error : MessageType.Warning;
                 var lines = new List<string> { $"{L.Target(t.Name)}: {L.Status(t.Status)}（{t.Profile}）" };
-                if (t.Status == "fail") lines.AddRange(t.BudgetFailures);
+                if (t.Status == "fail")
+                {
+                    lines.AddRange(t.BudgetFailures);
+                    if (t.BudgetFailures.Any(f => f.Contains("triangles")))
+                        lines.Add("「曲線の細かさ」を粗くすると三角面数を減らせます（「プレビュー…」で事前に確認できます）。");
+                }
                 else if (t.ReviewReasons.Count > 0) lines.Add("確認事項: " + string.Join("、", t.ReviewReasons.Select(L.Reason)));
                 if (t.Name == "quest")
-                    lines.Add(t.Status == "fail" ? "Quest には対応できません。この文書は PC 専用にしてください。"
+                    lines.Add(t.Status == "fail" ? "このままでは Quest には対応できません。設定を変えて再変換するか、この文書は PC 専用にしてください。"
                                                  : "実機で表示と負荷を確認してから「実機確認済み」にしてください。");
+                if (measuredSizes.TryGetValue(t.Name, out var size)) lines.Add(size);
                 EditorGUILayout.HelpBox(string.Join("\n", lines), type);
                 generatedPrefabs.TryGetValue(t.Name, out var prefabPath);
                 var doc = prefabPath != null ? AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath) : null;
@@ -389,6 +443,12 @@ namespace PDF2Unity.Editor
                         EditorGUILayout.ObjectField(doc, typeof(GameObject), false);
                     using (new EditorGUI.DisabledScope(doc == null))
                         if (GUILayout.Button("シーンに配置", GUILayout.Width(100))) Place(doc);
+                    using (new EditorGUI.DisabledScope(doc == null || !WorldSize.Supported(t.Name)))
+                        if (GUILayout.Button(new GUIContent("容量を測る", "この Prefab がワールドのダウンロード容量に加える大きさを、実際にビルドして測ります（1 分ほどかかります）"), GUILayout.Width(90)))
+                        {
+                            MeasureSize(t.Name, prefabPath);
+                            GUIUtility.ExitGUI();
+                        }
                     if (t.Name == "quest" && doc != null)
                     {
                         var folder = Path.GetDirectoryName(prefabPath).Replace('\\', '/');

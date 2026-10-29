@@ -13,7 +13,7 @@ namespace PDF2Unity.Editor
     /// Command line entry points for CI / regression (run without -nographics so capture works):
     ///   Unity -batchmode -quit -projectPath P -executeMethod PDF2Unity.Editor.BatchCommands.ConvertAndCapture
     ///         -p2uPdf &lt;file.pdf&gt; [-p2uTargets pc,quest] [-p2uOut Assets/...] [-p2uPackage &lt;dir&gt;]
-    ///         [-p2uCaptureDir &lt;dir&gt;] [-p2uDpi 110] [-p2uForce 1] [-p2uImages light|faithful]
+    ///         [-p2uCaptureDir &lt;dir&gt;] [-p2uDpi 110] [-p2uForce 1] [-p2uImages light|small|faithful] [-p2uCurve 1]
     ///   ... -executeMethod PDF2Unity.Editor.BatchCommands.ImportAndCapture -p2uPackage &lt;dir&gt; -p2uTarget pc ...
     /// </summary>
     public static class BatchCommands
@@ -24,6 +24,36 @@ namespace PDF2Unity.Editor
             for (int i = 0; i < args.Length - 1; i++)
                 if (args[i] == name) return args[i + 1];
             return def;
+        }
+
+        /// <summary>Renders the curve preview of a PDF page to PNG: -p2uPdf, -p2uPreviewOut, [-p2uTargets quest] [-p2uCurve 1] [-p2uWire 1] [-p2uZoom 1] [-p2uFocus x,y].</summary>
+        public static void RenderCurvePreview()
+        {
+            int code = 0;
+            try
+            {
+                var prof = Arg("-p2uTargets", "pc") == "quest" ? Profile.QuestStandard() : Profile.PcStandard();
+                CurvePreviewWindow.RenderToPng(Path.GetFullPath(Arg("-p2uPdf")), 0, prof,
+                    double.Parse(Arg("-p2uCurve", "1"), System.Globalization.CultureInfo.InvariantCulture), 1600,
+                    Arg("-p2uPreviewOut"), Arg("-p2uWire") == "1",
+                    Arg("-p2uFocus") is string f ? new Vector2(float.Parse(f.Split(',')[0]), float.Parse(f.Split(',')[1])) : (Vector2?)null, float.Parse(Arg("-p2uZoom", "1"), System.Globalization.CultureInfo.InvariantCulture));
+            }
+            catch (Exception e) { Debug.LogException(e); code = 1; }
+            EditorApplication.Exit(code);
+        }
+
+        /// <summary>Prints the download size a generated prefab adds to a world: -p2uPrefab Assets/.../Document.prefab [-p2uTarget pc|quest].</summary>
+        public static void MeasureWorldSize()
+        {
+            int code = 0;
+            try
+            {
+                var prefab = Arg("-p2uPrefab") ?? throw new ArgumentException("-p2uPrefab required");
+                long bytes = WorldSize.Measure(prefab, Arg("-p2uTarget", "pc"));
+                Debug.Log($"[{PdfUnitySettings.ProductName}] world size of {prefab}: {bytes / 1048576.0:0.00} MB");
+            }
+            catch (Exception e) { Debug.LogException(e); code = 1; }
+            EditorApplication.Exit(code);
         }
 
         static float Dpi => float.Parse(Arg("-p2uDpi", "110"), System.Globalization.CultureInfo.InvariantCulture);
@@ -43,6 +73,7 @@ namespace PDF2Unity.Editor
                     Input = Path.GetFullPath(pdf), Output = pkgDir, Targets = targets,
                     CacheDir = Path.GetFullPath(PdfUnitySettings.ToolCache), ReferenceDpi = Dpi,
                     ImageQuality = Arg("-p2uImages", "light"),
+                    CurveDetail = double.Parse(Arg("-p2uCurve", "1"), System.Globalization.CultureInfo.InvariantCulture),
                 };
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 var res = Compiler.Compile(opts, new Job(CancellationToken.None, 3600));

@@ -83,7 +83,7 @@ namespace PDF2Unity.Editor
             foreach (var b in pagesData.SelectMany(p => p.Batches).Where(b => b.Kind == "textured"))
             {
                 var dest = $"{folder}/Textures/{Path.GetFileName(b.Texture)}";
-                if (!texSpecs.ContainsKey(dest)) texSpecs[dest] = TextureSpec.For(dest, tinfo, b.Composite);
+                if (!texSpecs.ContainsKey(dest)) texSpecs[dest] = TextureSpec.For(dest, tinfo, b.Opaque);
             }
             foreach (var kv in texSpecs) TextureImport.Pending[kv.Key] = kv.Value;
             try
@@ -251,16 +251,20 @@ namespace PDF2Unity.Editor
         {
             public int MaxSize;
             public bool Quest;
-            public bool Opaque; // light mode, opaque photographic image (JPEG): DXT1 on PC, no alpha channel
+            public bool Opaque; // light/small mode, opaque JPEG or PNG for which DXT1 is visually lossless: DXT1 on PC, no alpha channel
+            public bool Crunch; // small mode: crunch compression (much smaller download, same memory)
 
-            public static TextureSpec For(string path, TargetInfo t, bool composite) => new TextureSpec
+            const int CrunchQuality = 50;
+
+            public static TextureSpec For(string path, TargetInfo t, bool opaque) => new TextureSpec
             {
                 MaxSize = NearestSize(t.MaxTextureSize),
                 Quest = t.Name == "quest",
-                Opaque = t.ImageQuality == "light" && !composite && path.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase),
+                Opaque = t.ImageQuality != "faithful" && (opaque || path.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)),
+                Crunch = t.ImageQuality == "small",
             };
 
-            string Signature => $"pdf2unity:1:{MaxSize}:{(Quest ? "q" : "p")}:{(Opaque ? "o" : "a")}";
+            string Signature => $"pdf2unity:2:{MaxSize}:{(Quest ? "q" : "p")}:{(Opaque ? "o" : "a")}{(Crunch ? ":c" : "")}";
 
             /// <summary>Applies the settings; false if the importer already had exactly these settings.</summary>
             public bool Apply(TextureImporter imp)
@@ -276,18 +280,21 @@ namespace PDF2Unity.Editor
                 imp.wrapMode = TextureWrapMode.Clamp;
                 imp.filterMode = FilterMode.Trilinear;
                 imp.anisoLevel = 4;
-                imp.npotScale = TextureImporterNPOTScale.None;
+                // Unity leaves non-power-of-two textures uncompressed; light mode atlases are powers of two already.
+                imp.npotScale = TextureImporterNPOTScale.ToLarger;
                 imp.isReadable = false;
                 imp.maxTextureSize = MaxSize;
-                // PC: DXT1 (4 bpp) for opaque photos in the light mode, BC7 (8 bpp) otherwise.
-                imp.textureCompression = Opaque ? TextureImporterCompression.Compressed : TextureImporterCompression.CompressedHQ;
-                imp.crunchedCompression = false;
+                // PC: DXT1 (4 bpp) for opaque images in the light mode, BC7 (8 bpp) otherwise; crunched DXT1/DXT5 in the small mode.
+                imp.textureCompression = Opaque || Crunch ? TextureImporterCompression.Compressed : TextureImporterCompression.CompressedHQ;
+                imp.crunchedCompression = Crunch;
+                imp.compressionQuality = Crunch ? CrunchQuality : 50;
                 if (Quest)
                 {
                     imp.SetPlatformTextureSettings(new TextureImporterPlatformSettings
                     {
                         name = "Android", overridden = true, maxTextureSize = MaxSize,
-                        format = TextureImporterFormat.ASTC_6x6, compressionQuality = 100,
+                        format = !Crunch ? TextureImporterFormat.ASTC_6x6 : Opaque ? TextureImporterFormat.ETC_RGB4Crunched : TextureImporterFormat.ETC2_RGBA8Crunched,
+                        compressionQuality = Crunch ? CrunchQuality : 100, crunchedCompression = Crunch,
                     });
                 }
                 imp.userData = Signature;

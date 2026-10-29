@@ -14,6 +14,7 @@ namespace PDF2Unity.Editor
         public string Kind;          // "solid" | "textured"
         public bool Composite;
         public bool Atlas;           // texture atlas shared by several images and vector items
+        public bool Opaque;          // opaque texture that may use DXT1 on PC (light mode)
         public string Texture;       // package relative path (textured only)
         public string ImageRef;
         public Vector3[] Vertices;
@@ -226,6 +227,7 @@ namespace PDF2Unity.Editor
                         bd.Kind = J.Str(j, "kind", "solid");
                         bd.Composite = J.Bool(j, "composite");
                         bd.Atlas = J.Bool(j, "atlas");
+                        bd.Opaque = J.Bool(j, "opaque");
                         bd.Texture = J.Str(j, "texture");
                         bd.ImageRef = J.Str(j, "image");
                     }
