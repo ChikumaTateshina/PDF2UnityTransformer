@@ -36,7 +36,7 @@ namespace PDF2Unity.Editor
             cam.allowMSAA = true;
 
             // Supersampled render (MSAA is not reliably applied to offscreen cameras in batch mode).
-            const int ss = 4;
+            int ss = Mathf.Clamp(SystemInfo.maxTextureSize / Mathf.Max(width, height), 1, 4);
             var desc = new RenderTextureDescriptor(width * ss, height * ss, RenderTextureFormat.ARGB32, 24)
             {
                 sRGB = QualitySettings.activeColorSpace == ColorSpace.Linear,
@@ -62,7 +62,7 @@ namespace PDF2Unity.Editor
                         var c = src[(y * ss + dy) * width * ss + x * ss + dx];
                         r += c.r; g += c.g; b += c.b;
                     }
-                    const int n = ss * ss;
+                    int n = ss * ss;
                     dst[y * width + x] = new Color32((byte)(r / n), (byte)(g / n), (byte)(b / n), 255);
                 }
                 var tex = new Texture2D(width, height, TextureFormat.RGBA32, false, false);

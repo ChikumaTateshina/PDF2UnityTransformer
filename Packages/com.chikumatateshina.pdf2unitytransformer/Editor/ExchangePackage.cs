@@ -13,6 +13,7 @@ namespace PDF2Unity.Editor
         public int Order;
         public string Kind;          // "solid" | "textured"
         public bool Composite;
+        public bool Atlas;           // texture atlas shared by several images and vector items
         public string Texture;       // package relative path (textured only)
         public string ImageRef;
         public Vector3[] Vertices;
@@ -37,6 +38,7 @@ namespace PDF2Unity.Editor
         public string Profile;
         public string Compression;
         public int MaxTextureSize;
+        public string ImageQuality;   // light | faithful
         public List<string> ReviewReasons = new List<string>();
         public List<string> BudgetFailures = new List<string>();
     }
@@ -89,6 +91,7 @@ namespace PDF2Unity.Editor
                         Profile = J.Str(kv.Value, "profile", ""),
                         Compression = J.Str(kv.Value, "textureCompression", "high"),
                         MaxTextureSize = (int)J.Num(kv.Value, "maxTextureSize", 4096),
+                        ImageQuality = J.Str(kv.Value, "imageQuality", "faithful"),
                     };
                     foreach (var r in J.Arr(kv.Value, "reviewReasons") ?? new List<object>()) t.ReviewReasons.Add(r as string);
                     foreach (var r in J.Arr(kv.Value, "budgetFailures") ?? new List<object>()) t.BudgetFailures.Add(r as string);
@@ -222,6 +225,7 @@ namespace PDF2Unity.Editor
                         bd.Order = (int)J.Num(j, "order", b);
                         bd.Kind = J.Str(j, "kind", "solid");
                         bd.Composite = J.Bool(j, "composite");
+                        bd.Atlas = J.Bool(j, "atlas");
                         bd.Texture = J.Str(j, "texture");
                         bd.ImageRef = J.Str(j, "image");
                     }

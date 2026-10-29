@@ -77,6 +77,15 @@ namespace PDF2Unity.Editor
             var produced = new HashSet<string>();
             var pagesData = pkg.PageNumbers().Select(n => pkg.LoadPage(n, target)).ToList();
 
+            // Import settings are applied during the first import (TextureImport.Pending), so each texture is
+            // imported once; textures already imported with the same settings are not touched.
+            var texSpecs = new Dictionary<string, TextureSpec>();
+            foreach (var b in pagesData.SelectMany(p => p.Batches).Where(b => b.Kind == "textured"))
+            {
+                var dest = $"{folder}/Textures/{Path.GetFileName(b.Texture)}";
+                if (!texSpecs.ContainsKey(dest)) texSpecs[dest] = TextureSpec.For(dest, tinfo, b.Composite);
+            }
+            foreach (var kv in texSpecs) TextureImport.Pending[kv.Key] = kv.Value;
             try
             {
                 AssetDatabase.StartAssetEditing();
@@ -100,15 +109,23 @@ namespace PDF2Unity.Editor
             {
                 AssetDatabase.StopAssetEditing();
             }
-            AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+            try
+            {
+                AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+                foreach (var kv in texSpecs)
+                {
+                    var imp = AssetImporter.GetAtPath(kv.Key) as TextureImporter;
+                    if (imp != null && kv.Value.Apply(imp)) imp.SaveAndReimport();
+                }
+            }
+            finally
+            {
+                TextureImport.Pending.Clear();
+            }
 
             var texAssets = new Dictionary<string, string>();
             foreach (var b in pagesData.SelectMany(p => p.Batches).Where(b => b.Kind == "textured"))
-            {
-                var dest = $"{folder}/Textures/{Path.GetFileName(b.Texture)}";
-                texAssets[b.Texture] = dest;
-                ConfigureTexture(dest, tinfo, b.Composite);
-            }
+                texAssets[b.Texture] = $"{folder}/Textures/{Path.GetFileName(b.Texture)}";
 
             // ---- materials ---------------------------------------------------------------
             var solidMat = WriteMaterial($"{folder}/Materials/PDF_Solid.mat", ShaderSolid, null, null, record, opt, rep, produced);
@@ -150,7 +167,7 @@ namespace PDF2Unity.Editor
                         var b = page.Batches[k];
                         if (batchMeshes[k] == null) continue;
                         var mat = b.Kind == "textured" ? texMats[b.Texture] : solidMat;
-                        var label = b.Composite ? "Composite" : b.Kind == "textured" ? "Image" : "Vector";
+                        var label = b.Composite ? "Composite" : b.Atlas ? "Atlas" : b.Kind == "textured" ? "Image" : "Vector";
                         AddRenderer(content, $"B{b.Order:D3}_{label}", batchMeshes[k], mat, opt.SortingOrderBase + 1 + b.Order, Vector3.zero);
                     }
                     var path = $"{folder}/Pages/{pname}.prefab";
@@ -229,33 +246,64 @@ namespace PDF2Unity.Editor
             AssetDatabase.CreateFolder(parent, Path.GetFileName(path));
         }
 
-        static void ConfigureTexture(string path, TargetInfo t, bool composite)
+        /// <summary>Import settings of a generated texture.</summary>
+        public struct TextureSpec
         {
-            var imp = AssetImporter.GetAtPath(path) as TextureImporter;
-            if (imp == null) return;
-            imp.textureType = TextureImporterType.Default;
-            imp.sRGBTexture = true;
-            // Delta composites carry alpha (only the pixels changed by an effect are opaque).
-            imp.alphaSource = TextureImporterAlphaSource.FromInput;
-            imp.alphaIsTransparency = true;
-            imp.mipmapEnabled = true;
-            imp.mipmapFilter = TextureImporterMipFilter.KaiserFilter;
-            imp.wrapMode = TextureWrapMode.Clamp;
-            imp.filterMode = FilterMode.Trilinear;
-            imp.anisoLevel = 4;
-            imp.npotScale = TextureImporterNPOTScale.None;
-            imp.isReadable = false;
-            imp.maxTextureSize = NearestSize(t.MaxTextureSize);
-            imp.textureCompression = TextureImporterCompression.CompressedHQ;
-            if (t.Name == "quest")
+            public int MaxSize;
+            public bool Quest;
+            public bool Opaque; // light mode, opaque photographic image (JPEG): DXT1 on PC, no alpha channel
+
+            public static TextureSpec For(string path, TargetInfo t, bool composite) => new TextureSpec
             {
-                imp.SetPlatformTextureSettings(new TextureImporterPlatformSettings
+                MaxSize = NearestSize(t.MaxTextureSize),
+                Quest = t.Name == "quest",
+                Opaque = t.ImageQuality == "light" && !composite && path.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase),
+            };
+
+            string Signature => $"pdf2unity:1:{MaxSize}:{(Quest ? "q" : "p")}:{(Opaque ? "o" : "a")}";
+
+            /// <summary>Applies the settings; false if the importer already had exactly these settings.</summary>
+            public bool Apply(TextureImporter imp)
+            {
+                if (imp.userData == Signature) return false;
+                imp.textureType = TextureImporterType.Default;
+                imp.sRGBTexture = true;
+                // Delta composites and masks carry alpha (only the pixels changed by an effect are opaque).
+                imp.alphaSource = Opaque ? TextureImporterAlphaSource.None : TextureImporterAlphaSource.FromInput;
+                imp.alphaIsTransparency = !Opaque;
+                imp.mipmapEnabled = true;
+                imp.mipmapFilter = TextureImporterMipFilter.KaiserFilter;
+                imp.wrapMode = TextureWrapMode.Clamp;
+                imp.filterMode = FilterMode.Trilinear;
+                imp.anisoLevel = 4;
+                imp.npotScale = TextureImporterNPOTScale.None;
+                imp.isReadable = false;
+                imp.maxTextureSize = MaxSize;
+                // PC: DXT1 (4 bpp) for opaque photos in the light mode, BC7 (8 bpp) otherwise.
+                imp.textureCompression = Opaque ? TextureImporterCompression.Compressed : TextureImporterCompression.CompressedHQ;
+                imp.crunchedCompression = false;
+                if (Quest)
                 {
-                    name = "Android", overridden = true, maxTextureSize = NearestSize(t.MaxTextureSize),
-                    format = TextureImporterFormat.ASTC_6x6, compressionQuality = 100,
-                });
+                    imp.SetPlatformTextureSettings(new TextureImporterPlatformSettings
+                    {
+                        name = "Android", overridden = true, maxTextureSize = MaxSize,
+                        format = TextureImporterFormat.ASTC_6x6, compressionQuality = 100,
+                    });
+                }
+                imp.userData = Signature;
+                return true;
             }
-            imp.SaveAndReimport();
+        }
+
+        /// <summary>Applies <see cref="TextureSpec"/>s while textures are imported for the first time.</summary>
+        internal sealed class TextureImport : AssetPostprocessor
+        {
+            internal static readonly Dictionary<string, TextureSpec> Pending = new Dictionary<string, TextureSpec>();
+
+            void OnPreprocessTexture()
+            {
+                if (Pending.TryGetValue(assetPath, out var spec) && assetImporter is TextureImporter imp) spec.Apply(imp);
+            }
         }
 
         static int NearestSize(int v)
@@ -297,23 +345,38 @@ namespace PDF2Unity.Editor
             if (existing == null)
             {
                 AssetDatabase.CreateAsset(src, path);
+                SetReadable(src, false);
                 rep.Written.Add(path);
                 return src;
             }
             // Update in place so the GUID (and every reference to it) is preserved.
+            SetReadable(existing, true);
             existing.Clear();
             existing.indexFormat = src.indexFormat;
             existing.vertices = src.vertices;
             existing.colors32 = src.colors32;
             existing.uv = src.uv;
-            existing.normals = src.normals;
             existing.SetIndices(src.GetIndices(0), MeshTopology.Triangles, 0, true);
             existing.bounds = src.bounds;
             existing.name = src.name;
+            SetReadable(existing, false);
             EditorUtility.SetDirty(existing);
             UnityEngine.Object.DestroyImmediate(src);
             rep.Written.Add(path);
             return existing;
+        }
+
+        /// <summary>
+        /// Non-readable meshes keep no CPU-side copy in the player (about half the mesh memory).
+        /// Nothing reads the generated meshes at runtime.
+        /// </summary>
+        static void SetReadable(Mesh m, bool readable)
+        {
+            var so = new SerializedObject(m);
+            var p = so.FindProperty("m_IsReadable");
+            if (p == null || p.boolValue == readable) return;
+            p.boolValue = readable;
+            so.ApplyModifiedPropertiesWithoutUndo();
         }
 
         /// <summary>Batch geometry. Triangle order = PDF painting order; never optimised/reordered.</summary>
@@ -324,9 +387,7 @@ namespace PDF2Unity.Editor
             m.vertices = b.Vertices;
             m.colors32 = b.Colors;
             if (b.Uvs != null) m.uv = b.Uvs;
-            var n = new Vector3[b.Vertices.Length];
-            for (int k = 0; k < n.Length; k++) n[k] = Vector3.back;
-            m.normals = n;
+            // No normals: the unlit shaders do not use them (saves 12 bytes per vertex).
             m.SetIndices(b.Indices, MeshTopology.Triangles, 0, true);
             m.RecalculateBounds();
             return m;
@@ -339,8 +400,6 @@ namespace PDF2Unity.Editor
             var m = new Mesh { name = back ? "PaperBack" : "Paper" };
             m.vertices = new[] { new Vector3(-w, -h, 0), new Vector3(-w, h, 0), new Vector3(w, h, 0), new Vector3(w, -h, 0) };
             m.uv = new[] { new Vector2(0, 0), new Vector2(0, 1), new Vector2(1, 1), new Vector2(1, 0) };
-            var nrm = back ? Vector3.forward : Vector3.back;
-            m.normals = new[] { nrm, nrm, nrm, nrm };
             m.triangles = back ? new[] { 0, 2, 1, 0, 3, 2 } : new[] { 0, 1, 2, 0, 2, 3 };
             m.RecalculateBounds();
             return m;

@@ -117,6 +117,7 @@ namespace PDF2Unity.Editor
             ["image.stencil-pattern"] = "パターンで塗られたマスク画像を画像化しました。",
             ["image.size-mismatch"] = "画像の実寸法が PDF の記述と異なります。",
             ["image.resampled"] = "画像を表示サイズに合わせて縮小しました。",
+            ["image.reduced"] = "軽量モード: 見た目が変わらない範囲で画像の解像度を下げました。",
             // patterns / shadings / transparency
             ["pattern.tiling"] = "タイリングパターンを画像化しました。",
             ["pattern.missing"] = "参照されたパターンが見つかりません。",

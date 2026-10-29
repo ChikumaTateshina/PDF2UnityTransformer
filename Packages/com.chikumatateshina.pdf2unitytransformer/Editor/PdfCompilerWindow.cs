@@ -28,6 +28,13 @@ namespace PDF2Unity.Editor
             "直接再現できない描画が 1 つでもあれば変換を中止します。",
             "画像化が必要なページはページ全体を画像にします（ベクター表示は失われます）。",
         };
+        static readonly string[] ImageQualities = { "light", "faithful" };
+        static readonly GUIContent[] ImageQualityNames = { new GUIContent("軽量（既定）"), new GUIContent("忠実") };
+        static readonly string[] ImageQualityHelp =
+        {
+            "見た目が変わらない範囲で画像を縮小し、写真は JPEG に、小さな画像はアトラス（1 枚のテクスチャ）にまとめます。容量と描画負荷が下がります。",
+            "画像を元の解像度（上限まで）のまま PNG で出力します。",
+        };
         static readonly string[] PcProfiles = { "pc-standard", "pc-high" };
         static readonly GUIContent[] PcProfileNames = { new GUIContent("標準"), new GUIContent("高品質") };
 
@@ -37,6 +44,7 @@ namespace PDF2Unity.Editor
         [SerializeField] bool targetPc = true;
         [SerializeField] bool targetQuest;
         [SerializeField] int pcProfile;
+        [SerializeField] int imageQuality;
         [SerializeField] string outputFolder = PdfUnitySettings.DefaultOutputFolder;
         [SerializeField] string substituteFonts = "";
         [SerializeField] bool fontRightsDeclared;
@@ -91,6 +99,8 @@ namespace PDF2Unity.Editor
                     pcProfile = EditorGUILayout.Popup(pcProfile, PcProfileNames);
             }
             targetQuest = EditorGUILayout.ToggleLeft("Quest（Android）", targetQuest);
+            imageQuality = EditorGUILayout.Popup(new GUIContent("画像"), imageQuality, ImageQualityNames);
+            EditorGUILayout.HelpBox(ImageQualityHelp[imageQuality], MessageType.None);
             OutputFolderField();
             worldScale = EditorGUILayout.FloatField(
                 new GUIContent("Prefab の大きさ", "1 のとき 72pt = 1 ユニット。0.0254 で実寸（メートル）になります。"), worldScale);
@@ -265,8 +275,10 @@ namespace PDF2Unity.Editor
                 SubstituteFontDir = string.IsNullOrWhiteSpace(substituteFonts) ? null : PathUtil.Clean(substituteFonts),
                 FontRightsDeclared = fontRightsDeclared,
                 PrecomposeTranslucent = precomposeTranslucent,
+                ImageQuality = ImageQualities[imageQuality],
                 WorldScale = worldScale,
                 CacheDir = Path.GetFullPath(PdfUnitySettings.ToolCache),
+                WriteReference = false, // reference renders are only used by the regression tools
                 ReferenceDpi = 72,
                 Limits = new Limits { TimeoutSec = PdfUnitySettings.TimeoutSec },
             };

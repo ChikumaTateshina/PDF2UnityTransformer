@@ -14,6 +14,7 @@ namespace PDF2Unity.Core.Geometry
         public double MinStrokeWidthPt = 0.25;
         public double CompositeDpi = 300;
         public double ImageDpi = 300;
+        public double LightImageDpi = 200; // image density cap in the light image mode
         public int MaxTextureSize = 4096;
         public bool EnforceBudgets;
         public double BytesPerPixel = 1.0, MipFactor = 1.333;
@@ -21,10 +22,10 @@ namespace PDF2Unity.Core.Geometry
         public double MaxTextureMemoryMB = double.MaxValue, MaxOverdraw = double.MaxValue;
 
         public static Profile PcStandard() => new Profile();
-        public static Profile PcHigh() => new Profile { Name = "pc-high", CurveTolerancePt = 0.02, MinStrokeWidthPt = 0.2, CompositeDpi = 450, ImageDpi = 450, MaxTextureSize = 8192 };
+        public static Profile PcHigh() => new Profile { Name = "pc-high", CurveTolerancePt = 0.02, MinStrokeWidthPt = 0.2, CompositeDpi = 450, ImageDpi = 450, LightImageDpi = 300, MaxTextureSize = 8192 };
         public static Profile QuestStandard() => new Profile
         {
-            Name = "quest-standard", Target = "quest", CurveTolerancePt = 0.15, MinStrokeWidthPt = 0.35, CompositeDpi = 200, ImageDpi = 200,
+            Name = "quest-standard", Target = "quest", CurveTolerancePt = 0.15, MinStrokeWidthPt = 0.35, CompositeDpi = 200, ImageDpi = 200, LightImageDpi = 150,
             MaxTextureSize = 2048, EnforceBudgets = true, BytesPerPixel = 0.445, MaxTrianglesPerPage = 120000, MaxTrianglesTotal = 600000,
             MaxBatchesPerPage = 32, MaxTextureMemoryMB = 96, MaxOverdraw = 6,
         };

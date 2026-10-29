@@ -13,7 +13,7 @@ namespace PDF2Unity.Editor
     /// Command line entry points for CI / regression (run without -nographics so capture works):
     ///   Unity -batchmode -quit -projectPath P -executeMethod PDF2Unity.Editor.BatchCommands.ConvertAndCapture
     ///         -p2uPdf &lt;file.pdf&gt; [-p2uTargets pc,quest] [-p2uOut Assets/...] [-p2uPackage &lt;dir&gt;]
-    ///         [-p2uCaptureDir &lt;dir&gt;] [-p2uDpi 110] [-p2uForce 1]
+    ///         [-p2uCaptureDir &lt;dir&gt;] [-p2uDpi 110] [-p2uForce 1] [-p2uImages light|faithful]
     ///   ... -executeMethod PDF2Unity.Editor.BatchCommands.ImportAndCapture -p2uPackage &lt;dir&gt; -p2uTarget pc ...
     /// </summary>
     public static class BatchCommands
@@ -42,6 +42,7 @@ namespace PDF2Unity.Editor
                 {
                     Input = Path.GetFullPath(pdf), Output = pkgDir, Targets = targets,
                     CacheDir = Path.GetFullPath(PdfUnitySettings.ToolCache), ReferenceDpi = Dpi,
+                    ImageQuality = Arg("-p2uImages", "light"),
                 };
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 var res = Compiler.Compile(opts, new Job(CancellationToken.None, 3600));
