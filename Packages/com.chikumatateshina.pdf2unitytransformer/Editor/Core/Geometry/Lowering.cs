@@ -169,6 +169,8 @@ namespace PDF2Unity.Core.Geometry
         readonly bool precomposeTranslucent;
         readonly ClipResolver clips;
         readonly double tol, minW;
+        readonly double transparentCutoff;
+        int droppedTranslucent;
         readonly int pno;
         public readonly List<DrawItem> Items = new List<DrawItem>();
         public readonly List<(Rect box, string reason, int op, TruncPoint point)> Unsupported = new List<(Rect, string, int, TruncPoint)>();
@@ -176,8 +178,10 @@ namespace PDF2Unity.Core.Geometry
         readonly Rect displayRect;
         public readonly Job Job;
 
-        public PageLowering(PageModel p, Profile prof, string mode, Diagnostics d, GlyphCache g, bool precomposeTranslucent, Job job, double curveDetail = 1)
+        public PageLowering(PageModel p, Profile prof, string mode, Diagnostics d, GlyphCache g, bool precomposeTranslucent, Job job, double curveDetail = 1,
+                            double transparentCutoff = 0)
         {
+            this.transparentCutoff = transparentCutoff;
             page = p;
             profile = prof;
             this.mode = mode;
@@ -195,9 +199,11 @@ namespace PDF2Unity.Core.Geometry
         public void Run()
         {
             int k = 0;
-            foreach (var op in page.Ops)
+            foreach (var source in page.Ops)
             {
                 if ((++k & 63) == 0) Job?.Report(Job.Stage, Job.Progress, $"{k}/{page.Ops.Count}");
+                var op = DropFaint(source);
+                if (op == null) continue;
                 try
                 {
                     switch (op.Kind)
@@ -217,6 +223,35 @@ namespace PDF2Unity.Core.Geometry
                     Mark(op, OpBounds(op), "geometry.failed");
                 }
             }
+            if (droppedTranslucent > 0)
+                diag.Info("transparency.cutoff", $"{droppedTranslucent} translucent object(s) at or below opacity {transparentCutoff:0.##} were not drawn", pno);
+        }
+
+        bool Faint(double alpha) => alpha < 1 && alpha <= transparentCutoff;
+
+        /// <summary>
+        /// Applies the transparency cutoff: translucent fills, strokes, images and shadings whose opacity is at or
+        /// below it are not drawn at all. Returns null when nothing of the operation is left.
+        /// </summary>
+        DrawOp DropFaint(DrawOp op)
+        {
+            if (transparentCutoff <= 0) return op;
+            switch (op.Kind)
+            {
+                case OpKind.Path:
+                case OpKind.Glyphs:
+                    bool fill = op.Fill != null && Faint(op.Fill.Alpha), stroke = op.Stroke != null && Faint(op.Stroke.Alpha);
+                    if (!fill && !stroke) return op;
+                    droppedTranslucent++;
+                    var rest = op.WithPaints(fill ? null : op.Fill, stroke ? null : op.Stroke);
+                    return rest.Fill == null && rest.Stroke == null ? null : rest;
+                case OpKind.Image:
+                case OpKind.Shading:
+                    if (!Faint(op.Alpha)) return op;
+                    droppedTranslucent++;
+                    return null;
+            }
+            return op;
         }
 
         Rect OpBounds(DrawOp op)

@@ -131,6 +131,7 @@ namespace PDF2Unity.Editor
             ["transparency.softmask"] = "ソフトマスクを使った部分を画像化しました。",
             ["transparency.ais"] = "特殊な透明設定を使った部分を画像化しました。",
             ["transparency.group"] = "透明グループを画像化しました。",
+            ["transparency.cutoff"] = "不透明度が閾値以下の半透明の物体を、完全に透明にしました（描画していません）。",
             ["transparency.linear-blend"] = "半透明の重なりは Linear 色空間では PDF とわずかに異なります（「半透明を画像化」で一致させられます）。",
             // structure
             ["form.recursion"] = "再帰または深すぎる入れ子のフォームを画像化しました。",

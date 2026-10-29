@@ -52,6 +52,8 @@ namespace PDF2Unity.Editor
         [SerializeField] string substituteFonts = "";
         [SerializeField] bool fontRightsDeclared;
         [SerializeField] bool precomposeTranslucent;
+        [SerializeField] bool transparentCutoffEnabled;
+        [SerializeField] int transparentCutoffPercent = 10;
         [SerializeField] float worldScale = 1f;
         [SerializeField] bool overwriteUserEdits;
         [SerializeField] Color paperColor = Color.white;
@@ -192,6 +194,14 @@ namespace PDF2Unity.Editor
             if (advanced)
             {
                 PdfUnitySettings.TimeoutSec = EditorGUILayout.IntField("制限時間（秒、PDF 1 件あたり）", PdfUnitySettings.TimeoutSec);
+                transparentCutoffEnabled = EditorGUILayout.ToggleLeft(
+                    new GUIContent("薄い半透明を完全に透明にする", "不透明度が閾値以下の半透明の文字・図形・画像・グラデーションを描画しません。ほとんど見えない重なりを省いて、描画負荷と色の差を減らせます。"),
+                    transparentCutoffEnabled);
+                using (new EditorGUI.DisabledScope(!transparentCutoffEnabled))
+                using (new EditorGUI.IndentLevelScope())
+                    transparentCutoffPercent = EditorGUILayout.IntSlider(
+                        new GUIContent("閾値（不透明度 %）", "この値以下の不透明度の物体を透明にします。不透明（100%）の物体は対象外です。"),
+                        transparentCutoffPercent, 1, 99);
                 using (new EditorGUI.DisabledScope(running != null))
                     if (GUILayout.Button("変換済みのデータから Prefab だけ作り直す…"))
                     {
@@ -420,6 +430,7 @@ namespace PDF2Unity.Editor
                 SubstituteFontDir = string.IsNullOrWhiteSpace(substituteFonts) ? null : PathUtil.Clean(substituteFonts),
                 FontRightsDeclared = fontRightsDeclared,
                 PrecomposeTranslucent = precomposeTranslucent,
+                TransparentCutoff = transparentCutoffEnabled ? transparentCutoffPercent / 100.0 : 0,
                 ImageQuality = ImageQualities[imageQuality],
                 CurveDetail = CurvePreviewWindow.Details[Mathf.Clamp(curveDetail, 0, CurvePreviewWindow.Details.Length - 1)],
                 WorldScale = worldScale,

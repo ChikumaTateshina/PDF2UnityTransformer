@@ -88,6 +88,7 @@ namespace PDF2Unity.Editor
                     CacheDir = Path.GetFullPath(PdfUnitySettings.ToolCache), ReferenceDpi = Dpi,
                     ImageQuality = Arg("-p2uImages", "light"),
                     CurveDetail = double.Parse(Arg("-p2uCurve", "1"), System.Globalization.CultureInfo.InvariantCulture),
+                    TransparentCutoff = double.Parse(Arg("-p2uAlphaCutoff", "0"), System.Globalization.CultureInfo.InvariantCulture),
                 };
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 var res = Compiler.Compile(opts, new Job(CancellationToken.None, 3600));

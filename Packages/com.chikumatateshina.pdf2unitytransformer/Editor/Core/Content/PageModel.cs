@@ -68,6 +68,15 @@ namespace PDF2Unity.Core.Content
 
         public string Reason, Detail;
         public Rect BBox;         // page space (unsupported ops)
+
+        /// <summary>Copy with other paints (the page model is shared by all targets and must not change).</summary>
+        public DrawOp WithPaints(Paint fill, Paint stroke)
+        {
+            var c = (DrawOp)MemberwiseClone();
+            c.Fill = fill;
+            c.Stroke = stroke;
+            return c;
+        }
     }
 
     /// <summary>

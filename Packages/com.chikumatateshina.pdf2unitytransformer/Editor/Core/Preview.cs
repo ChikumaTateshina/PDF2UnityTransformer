@@ -39,7 +39,7 @@ namespace PDF2Unity.Core
             PageLowering low;
             lock (glyphs) // one lowering at a time (the glyph cache is shared)
             {
-                low = new PageLowering(pm, prof, options.Mode, new Diagnostics(), glyphs, options.PrecomposeTranslucent, job, curveDetail);
+                low = new PageLowering(pm, prof, options.Mode, new Diagnostics(), glyphs, options.PrecomposeTranslucent, job, curveDetail, options.TransparentCutoff);
                 low.Run();
             }
             var comps = low.Composites();

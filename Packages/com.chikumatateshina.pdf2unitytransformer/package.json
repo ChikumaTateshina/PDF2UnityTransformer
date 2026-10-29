@@ -1,7 +1,7 @@
 {
   "name": "com.chikumatateshina.pdf2unitytransformer",
   "displayName": "PDF2UnityTransformer",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "unity": "2022.3",
   "description": "Converts PDF documents into static meshes, textures, materials and prefabs inside the Unity Editor (pure C# with an editor-only PDFium plugin; no Python, no runtime PDF parsing, no scripts or Udon in the world). Windows editor.",
   "author": {

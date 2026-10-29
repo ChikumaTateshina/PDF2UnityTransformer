@@ -23,6 +23,7 @@ namespace PDF2Unity.Core
         public string SubstituteFontDir;
         public bool FontRightsDeclared;
         public bool PrecomposeTranslucent;
+        public double TransparentCutoff;      // translucent objects with opacity <= this are not drawn (0 = off)
         public string ImageQuality = "light"; // light (visually lossless reduction, JPEG, atlases) | small (download size first) | faithful
         public double CurveDetail = 1;        // curve tolerance multiplier: < 1 finer, > 1 fewer triangles
         public double ReferenceDpi = 110;
@@ -106,7 +107,7 @@ namespace PDF2Unity.Core
                 foreach (var pm in pages)
                 {
                     job.Report($"lower:{prof.Target}", (float)step++ / Math.Max(1, totalSteps), $"page {pm.Index + 1}");
-                    var low = new PageLowering(pm, prof, o.Mode, diag, glyphCache, o.PrecomposeTranslucent, job, o.CurveDetail);
+                    var low = new PageLowering(pm, prof, o.Mode, diag, glyphCache, o.PrecomposeTranslucent, job, o.CurveDetail, o.TransparentCutoff);
                     low.Run();
                     list.Add((pm, low, low.Composites()));
                 }
@@ -284,6 +285,7 @@ namespace PDF2Unity.Core
                     ["translucency"] = o.PrecomposeTranslucent ? "precompose" : "native",
                     ["imageQuality"] = o.ImageQuality,
                     ["curveDetail"] = o.CurveDetail,
+                    ["transparentCutoff"] = o.TransparentCutoff,
                 },
                 ["pageToUnity"] = "72 PDF points * UserUnit = 1 Unity unit; page centred at origin, front faces -Z",
                 ["pages"] = pagesJson,
